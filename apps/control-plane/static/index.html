@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b1220">
+<title>Aether Console</title>
+<style>
+:root{font-family:system-ui,-apple-system,sans-serif;color-scheme:dark;background:#0b1220;color:#e9f0ff}*{box-sizing:border-box}
+body{margin:0;padding:clamp(14px,4vw,36px);max-width:960px;margin-inline:auto}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{margin:0;font-size:clamp(1.5rem,5vw,2.2rem)}h2{font-size:1.05rem;margin:0 0 14px}
+p{color:#a8b9d5;line-height:1.5}.tag{font-size:.8rem;background:#1a3154;padding:6px 10px;border-radius:30px}
+main{display:grid;gap:16px;margin-top:24px}.panel{border:1px solid #2b405e;border-radius:18px;background:#121e31;padding:clamp(16px,4vw,24px)}
+label{display:block;font-weight:600;margin:12px 0 7px}
+textarea,select,input,button{font:inherit;border-radius:10px}
+textarea,select,input{width:100%;background:#0a1425;color:#fff;border:1px solid #49607e;padding:12px}
+textarea{min-height:120px;resize:vertical}
+button{border:0;padding:12px 17px;min-height:44px;background:#76b8ff;color:#071222;font-weight:700;cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}.secondary{background:#233c5d;color:#e9f0ff}
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#091321;border-radius:10px;padding:14px;min-height:48px}
+small{color:#a8b9d5}.ok{color:#77dfac}.bad{color:#ff9c9c}
+@media(min-width:760px){main{grid-template-columns:1.2fr .8fr}.wide{grid-column:1/-1}}
+</style>
+</head>
+<body>
+<header><div><h1>Aether Console</h1><p>Run a verified operation from your tablet or browser.</p></div><span class="tag" id="health" role="status">Checking engine…</span></header>
+<main>
+<section class="panel"><h2>Execute</h2><form id="form">
+<label for="operation">Operation</label><select id="operation"><option value="echo">Echo text</option><option value="uppercase">Uppercase (ASCII)</option><option value="sha256">SHA-256 digest</option></select>
+<label for="payload">Input</label><textarea id="payload" maxlength="65536" placeholder="Type your input here" spellcheck="false"></textarea>
+<small>Maximum input: 64 KiB · No shell commands or uploaded files</small>
+<div class="actions"><button id="run" type="submit">Run operation</button><button type="button" class="secondary" id="sample">Try sample</button></div>
+</form></section>
+<section class="panel"><h2>Runtime</h2><p id="metrics" role="status">Loading status…</p><button type="button" class="secondary" id="refresh">Refresh status</button><p><small>Health values are process-local measurements, not a correctness guarantee.</small></p></section>
+<section class="panel wide"><h2>Result</h2><p id="message" aria-live="polite">Ready for your first execution.</p><pre id="output" tabindex="0"></pre><div class="actions"><button type="button" class="secondary" id="copy" disabled>Copy result</button></div><p id="metadata"><small>Execution metadata appears here.</small></p></section>
+</main>
+<script>
+const byId=id=>document.getElementById(id);
+let lastOutput=null;
+async function refresh(){
+  try{
+    const [health,status]=await Promise.all([fetch('/health',{cache:'no-store'}),fetch('/system/status',{cache:'no-store'})]);
+    if(!health.ok||!status.ok)throw new Error('Engine unavailable');
+    const data=await status.json();
+    byId('health').textContent='Engine online';byId('health').className='tag ok';
+    byId('metrics').textContent='Completed: '+data.successes+' · Failed: '+data.failures+' · Running: '+data.active_tasks+'/'+data.capacity+' · Health signal: '+Number(data.delta).toFixed(3);
+  }catch(e){byId('health').textContent='Engine offline';byId('health').className='tag bad';byId('metrics').textContent='Unable to read runtime status.'}
+}
+byId('form').addEventListener('submit',async event=>{
+  event.preventDefault();
+  const button=byId('run');button.disabled=true;
+  byId('message').textContent='Executing…';byId('output').textContent='';byId('metadata').textContent='';lastOutput=null;byId('copy').disabled=true;
+  try{
+    const response=await fetch('/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operation:byId('operation').value,payload:byId('payload').value})});
+    const data=await response.json();
+    if(!response.ok||!data.success)throw new Error(data.error||'Execution failed');
+    lastOutput=data.output;byId('copy').disabled=false;
+    byId('output').textContent=data.output;byId('message').textContent='Execution completed.';
+    byId('metadata').textContent='Task '+data.task_id+' · '+data.duration_ms+' ms · SHA-256 '+data.output_sha256;
+  }catch(e){byId('message').textContent='Error: '+e.message}
+  finally{button.disabled=false;refresh()}
+});
+byId('sample').addEventListener('click',()=>{byId('operation').value='sha256';byId('payload').value='Hello Aether';byId('payload').focus()});
+byId('refresh').addEventListener('click',refresh);
+byId('copy').addEventListener('click',async()=>{if(lastOutput===null)return;try{await navigator.clipboard.writeText(lastOutput);byId('message').textContent='Result copied.'}catch(e){byId('message').textContent='Copy unavailable. Select the result text instead.'}});
+refresh();
+</script>
+</body></html>
