@@ -1,0 +1,19 @@
+syntax = "proto3";
+package aether.v1;
+service ExecutionService {
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+message ExecuteRequest {
+  string task_id = 1;
+  string operation = 2;
+  string payload = 3;
+}
+message ExecuteResponse {
+  string task_id = 1;
+  string output = 2;
+  bool success = 3;
+  string error = 4;
+}
+message HealthRequest {}
+message HealthResponse { bool ready = 1; }
