@@ -1,0 +1,42 @@
+services:
+  execution-engine:
+    build:
+      context: .
+      dockerfile: apps/execution-engine/Dockerfile
+    expose: ["50051"]
+  control-plane:
+    build:
+      context: .
+      dockerfile: apps/control-plane/Dockerfile
+    environment:
+      ENGINE_URL: http://execution-engine:50051
+    ports: ["8080:8080"]
+    depends_on: [execution-engine]
+  temporal:
+    image: temporalio/auto-setup:1.27.2
+    profiles: ["workflow"]
+    environment:
+      DB: postgresql
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal-local-only
+      POSTGRES_SEEDS: temporal-db
+    ports: ["7233:7233"]
+    depends_on: [temporal-db]
+  temporal-db:
+    image: postgres:16
+    profiles: ["workflow"]
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal-local-only
+    volumes: [temporal-data:/var/lib/postgresql/data]
+  agent-service:
+    build: ./apps/agent-service
+    profiles: ["ai"]
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MODEL_NAME: ${MODEL_NAME:-openai/gpt-4o-mini}
+      ENGINE_API: http://control-plane:8080
+    depends_on: [control-plane]
+volumes:
+  temporal-data:
