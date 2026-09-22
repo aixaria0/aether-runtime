@@ -1,0 +1,30 @@
+name: End-to-end
+on:
+  push:
+  pull_request:
+jobs:
+  core-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start core
+        run: docker compose up --build -d execution-engine control-plane
+      - name: Wait for readiness
+        run: |
+          for i in $(seq 1 60); do
+            if curl --fail --silent http://localhost:8080/health >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker compose logs
+          exit 1
+      - name: Test browser console and end-to-end execution
+        run: |
+          curl --fail --silent http://localhost:8080/ | grep -q 'Aether Console'
+          python3 tests/e2e.py
+      - name: Container logs
+        if: always()
+        run: docker compose logs --no-color --tail=100
+      - name: Shutdown
+        if: always()
+        run: docker compose down --remove-orphans
