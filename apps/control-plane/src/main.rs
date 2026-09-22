@@ -38,7 +38,7 @@ async fn execute(State(state): State<Arc<AppState>>, Json(input): Json<ExecuteIn
 async fn health(State(state): State<Arc<AppState>>) -> StatusCode {
     let mut client = ExecutionServiceClient::new(state.engine.clone());
     match tokio::time::timeout(Duration::from_secs(2), client.health(Request::new(proto::HealthRequest{}))).await {
-        Ok(Ok(r)) if r.into_inner().ready => StatusCode::OK,
+        Ok(Ok(r)) if r.get_ref().ready => StatusCode::OK,
         _ => StatusCode::SERVICE_UNAVAILABLE
     }
 }
