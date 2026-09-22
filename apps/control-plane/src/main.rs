@@ -20,6 +20,7 @@ const MAX_PAYLOAD_BYTES: usize = 65_536;
 struct AppState {
     engine: Channel,
     permits: Arc<Semaphore>,
+    max_concurrent_tasks: usize,
     stability: Arc<Mutex<Stability>>,
 }
 
@@ -142,14 +143,14 @@ async fn health(State(state): State<Arc<AppState>>) -> StatusCode {
 
 async fn status(State(state): State<Arc<AppState>>) -> Json<SystemStatus> {
     let stability = state.stability.lock().await;
-    let capacity = state.permits.available_permits();
+    let available = state.permits.available_permits();
     Json(SystemStatus {
-        ready: true,
+        ready: available <= state.max_concurrent_tasks,
         delta: stability.delta,
         successes: stability.successes,
         failures: stability.failures,
-        active_tasks: 0, // Detailed in-flight metrics added when scheduler is introduced.
-        capacity,
+        active_tasks: state.max_concurrent_tasks - available,
+        capacity: state.max_concurrent_tasks,
     })
 }
 
@@ -165,6 +166,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(AppState {
         engine: channel,
         permits: Arc::new(Semaphore::new(capacity)),
+        max_concurrent_tasks: capacity,
         stability: Arc::new(Mutex::new(Stability::default())),
     });
     let app = Router::new()
