@@ -12,12 +12,13 @@ else()
   set(PROTOC "${Protobuf_PROTOC_EXECUTABLE}")
 endif()
 set(GRPC_CPP_PLUGIN "$<TARGET_FILE:gRPC::grpc_cpp_plugin>")
-set(PROTO "${CMAKE_CURRENT_SOURCE_DIR}/../../proto/execution.proto")
+get_filename_component(PROTO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../proto" REALPATH)
+set(PROTO "${PROTO_DIR}/execution.proto")
 set(GEN "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${GEN}")
 add_custom_command(
   OUTPUT "${GEN}/execution.pb.cc" "${GEN}/execution.pb.h" "${GEN}/execution.grpc.pb.cc" "${GEN}/execution.grpc.pb.h"
-  COMMAND "${PROTOC}" --proto_path="${CMAKE_CURRENT_SOURCE_DIR}/../../proto" --cpp_out="${GEN}" --grpc_out="${GEN}" --plugin=protoc-gen-grpc="${GRPC_CPP_PLUGIN}" "${PROTO}"
+  COMMAND "${PROTOC}" --proto_path=${PROTO_DIR} --cpp_out=${GEN} --grpc_out=${GEN} --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN} ${PROTO}
   DEPENDS "${PROTO}"
   VERBATIM)
 add_library(aether_proto "${GEN}/execution.pb.cc" "${GEN}/execution.grpc.pb.cc")
