@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-engine
+spec:
+  replicas: {{ .Values.executionEngine.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-engine
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-engine
+    spec:
+      containers:
+        - name: engine
+          image: "{{ .Values.image.registry }}/{{ .Values.image.prefix }}-execution-engine:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 50051
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-control
+spec:
+  replicas: {{ .Values.controlPlane.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-control
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-control
+    spec:
+      containers:
+        - name: control
+          image: "{{ .Values.image.registry }}/{{ .Values.image.prefix }}-control-plane:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: ENGINE_URL
+              value: "http://{{ .Release.Name }}-engine:50051"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
