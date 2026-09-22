@@ -1,0 +1,11 @@
+image:
+  registry: ghcr.io/aixaria0
+  prefix: aether-runtime
+  tag: v0.1.0
+  pullPolicy: IfNotPresent
+controlPlane:
+  replicas: 1
+  port: 8080
+executionEngine:
+  replicas: 1
+  port: 50051
