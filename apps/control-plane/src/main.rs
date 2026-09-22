@@ -2,7 +2,7 @@ use axum::{
     extract::State,
     http::StatusCode,
     routing::{get, post},
-    Json, Router,
+    Json, Router, response::Html,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -132,6 +132,8 @@ async fn execute(State(state): State<Arc<AppState>>, Json(input): Json<ExecuteIn
     }))
 }
 
+async fn console() -> Html<&'static str> { Html(include_str!("../static/index.html")) }
+
 async fn health(State(state): State<Arc<AppState>>) -> StatusCode {
     let mut client = ExecutionServiceClient::new(state.engine.clone());
     match tokio::time::timeout(Duration::from_secs(2),
@@ -170,6 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         stability: Arc::new(Mutex::new(Stability::default())),
     });
     let app = Router::new()
+        .route("/", get(console))
         .route("/health", get(health))
         .route("/system/status", get(status))
         .route("/execute", post(execute))
