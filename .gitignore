@@ -1,5 +1,6 @@
 target/
 build/
+.native-build/
 __pycache__/
 .pytest_cache/
 .env

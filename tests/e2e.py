@@ -1,4 +1,4 @@
-"""Black-box integration checks against a running Docker Compose core."""
+"""Black-box integration checks against a running Aether core."""
 import hashlib
 import json
 import os

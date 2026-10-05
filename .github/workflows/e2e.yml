@@ -3,11 +3,11 @@ on:
   push:
   pull_request:
 jobs:
-  core-smoke:
+  container-core-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Build and start core
         run: docker compose up --build -d execution-engine control-plane
       - name: Wait for readiness
@@ -28,3 +28,17 @@ jobs:
       - name: Shutdown
         if: always()
         run: docker compose down --remove-orphans
+
+  native-core-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ libgrpc++-dev protobuf-compiler-grpc libprotobuf-dev libssl-dev pkg-config
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Native two-process core smoke
+        run: bash tests/native-e2e.sh
