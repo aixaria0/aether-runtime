@@ -44,7 +44,18 @@ jobs:
           for e in p['entrypoints']:
               assert e['capability'] not in seen, f"duplicate capability: {e['capability']}"
               seen.add(e['capability'])
-              assert isinstance(e['command'], list) and e['command'] and all(isinstance(x, str) and x for x in e['command'])
+              has_command = 'command' in e
+              has_endpoint = 'endpoint' in e
+              assert has_command ^ has_endpoint, 'entrypoint must declare exactly one of command or endpoint'
+              if has_command:
+                  assert e.get('transport', 'cli') == 'cli'
+                  assert isinstance(e['command'], list) and e['command'] and all(isinstance(x, str) and x for x in e['command'])
+              else:
+                  assert e.get('transport') in {'http','grpc'}
+                  assert isinstance(e['endpoint'], dict) and e['endpoint']
+                  if e['transport'] == 'http':
+                      assert e['endpoint'].get('method') in {'GET','POST','PUT','PATCH','DELETE'}
+                      assert isinstance(e['endpoint'].get('path'), str) and e['endpoint']['path'].startswith('/')
               assert e['mode'] in allowed_mode
               assert e['network'] in allowed_network
               assert e['mutation'] in allowed_mutation

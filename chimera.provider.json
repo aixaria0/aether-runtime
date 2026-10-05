@@ -7,10 +7,16 @@
   "entrypoints": [
     {
       "capability": "aether.execute-allowlisted",
-      "command": ["docker", "compose", "up"],
       "mode": "bounded-execution",
       "network": "loopback",
-      "mutation": "none"
+      "mutation": "none",
+      "transport": "http",
+      "endpoint": {
+        "method": "POST",
+        "path": "/execute",
+        "health_path": "/health",
+        "protocol": "aether-runtime/v0.2"
+      }
     }
   ],
   "boundaries": [
