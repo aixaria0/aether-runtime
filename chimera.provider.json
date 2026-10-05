@@ -1,0 +1,21 @@
+{
+  "schema": "chimera-provider/v1",
+  "repository": "aixaria0/aether-runtime",
+  "role": "bounded-execution",
+  "control_plane": "aixaria0/CHIMERA-ONE",
+  "version": "0.2",
+  "entrypoints": [
+    {
+      "capability": "aether.execute-allowlisted",
+      "command": ["docker", "compose", "up"],
+      "mode": "bounded-execution",
+      "network": "loopback",
+      "mutation": "none"
+    }
+  ],
+  "boundaries": [
+    "Execution is restricted to the runtime's allowlisted operations; arbitrary command execution is outside the contract.",
+    "Output digests provide integrity signals, not proof of correct execution.",
+    "The current compose topology is for trusted local development unless authentication, TLS, quotas, and network isolation are added."
+  ]
+}
