@@ -1,0 +1,52 @@
+name: chimera-provider-contract
+
+on:
+  push:
+    paths:
+      - chimera.provider.json
+      - .github/workflows/chimera-provider-contract.yml
+  pull_request:
+    paths:
+      - chimera.provider.json
+      - .github/workflows/chimera-provider-contract.yml
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Validate provider declaration
+        env:
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p = json.loads(Path('chimera.provider.json').read_text())
+          required = {'schema','repository','role','control_plane','version','entrypoints','boundaries'}
+          missing = required - p.keys()
+          assert not missing, f'missing fields: {sorted(missing)}'
+          assert p['schema'] == 'chimera-provider/v1'
+          assert p['repository'] == os.environ['EXPECTED_REPOSITORY']
+          assert p['control_plane'] == 'aixaria0/CHIMERA-ONE'
+          assert isinstance(p['entrypoints'], list) and p['entrypoints']
+          assert isinstance(p['boundaries'], list) and p['boundaries']
+          allowed_mode = {'advisory','bounded-execution','verification','audit'}
+          allowed_network = {'none','loopback','explicit'}
+          allowed_mutation = {'none','workspace','external-explicit'}
+          seen = set()
+          for e in p['entrypoints']:
+              assert e['capability'] not in seen, f"duplicate capability: {e['capability']}"
+              seen.add(e['capability'])
+              assert isinstance(e['command'], list) and e['command'] and all(isinstance(x, str) and x for x in e['command'])
+              assert e['mode'] in allowed_mode
+              assert e['network'] in allowed_network
+              assert e['mutation'] in allowed_mutation
+          print(f"validated {p['repository']} with {len(seen)} capability entries")
+          PY
