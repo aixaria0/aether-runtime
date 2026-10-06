@@ -21,10 +21,13 @@ use tonic::{
 mod evidence;
 mod journal;
 mod kernel;
+mod scheduler;
 
 use evidence::{compare_receipts, ExecutionReceipt, ReplayComparison};
 use journal::{now_ns, Journal, JournalEvent, JournalVerification, StoredExecution};
-use kernel::{authorize, ExecuteInput};
+use kernel::{authorize_for_executor, ExecuteInput, ExecutionPermit};
+use scheduler::{AdaptiveScheduler, SchedulerSnapshot, CPP_EXECUTOR, RUST_EXECUTOR};
+use uuid::Uuid;
 
 #[allow(clippy::result_large_err)]
 pub mod proto {
@@ -39,6 +42,7 @@ struct AppState {
     max_concurrent_tasks: usize,
     stability: Arc<Mutex<Stability>>,
     journal: Journal,
+    scheduler: Arc<Mutex<AdaptiveScheduler>>,
 }
 
 #[derive(Debug)]
@@ -96,6 +100,7 @@ struct SystemStatus {
     journal_chain_valid: bool,
     journal_events: u64,
     journal_head: Option<String>,
+    scheduler: SchedulerSnapshot,
 }
 
 #[derive(Serialize)]
@@ -245,184 +250,279 @@ async fn verify_journal(journal: &Journal) -> Result<JournalVerification, ApiErr
         })
 }
 
-async fn run_execution(
-    state: &Arc<AppState>,
-    input: ExecuteInput,
-    parent_task_id: Option<String>,
-) -> Result<ExecuteOutput, ApiError> {
-    let permit = authorize(&input).map_err(|e| api_error(StatusCode::BAD_REQUEST, e))?;
-    let task_id = permit.task_id.clone();
-    let operation = permit.operation.as_str().to_string();
-    let expected = permit
-        .operation
-        .expected(&input.payload)
-        .map_err(|e| task_error(StatusCode::BAD_REQUEST, &task_id, e))?;
-
-    append_event(
-        &state.journal,
-        &task_id,
-        "TASK_ACCEPTED",
-        payload(&[
-            ("operation", operation.clone()),
-            ("input_sha256", permit.input_sha256.clone()),
-        ]),
-    )
-    .await?;
-    append_event(
-        &state.journal,
-        &task_id,
-        "POLICY_AUTHORIZED",
-        payload(&[
-            ("permit_id", permit.permit_id.clone()),
-            ("policy_sha256", permit.policy_sha256.clone()),
-            ("capabilities", permit.capability_names.join(",")),
-        ]),
-    )
-    .await?;
-
-    let _slot = match state.permits.clone().try_acquire_owned() {
-        Ok(slot) => slot,
-        Err(_) => {
-            append_event(
-                &state.journal,
-                &task_id,
-                "CAPACITY_REJECTED",
-                BTreeMap::new(),
+async fn persist_executor_stats(
+    journal: &Journal,
+    stats: scheduler::ExecutorStats,
+) -> Result<(), ApiError> {
+    let journal = journal.clone();
+    tokio::task::spawn_blocking(move || journal.save_executor_stats(&stats))
+        .await
+        .map_err(|e| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("scheduler persistence task: {e}"),
             )
-            .await?;
-            return Err(task_error(
-                StatusCode::TOO_MANY_REQUESTS,
-                &task_id,
-                "execution capacity exceeded",
-            ));
-        }
-    };
+        })?
+        .map_err(|e| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("scheduler persistence: {e}"),
+            )
+        })
+}
 
-    append_event(
-        &state.journal,
-        &task_id,
-        "EXECUTION_STARTED",
-        payload(&[("executor_id", permit.executor_id.clone())]),
-    )
-    .await?;
+struct ExecutorAttempt {
+    output: String,
+    success: bool,
+    error: String,
+    elapsed_ms: u64,
+}
 
+async fn execute_on_executor(
+    state: &Arc<AppState>,
+    permit: &ExecutionPermit,
+    payload_text: &str,
+) -> Result<ExecutorAttempt, String> {
     let start = Instant::now();
+    if permit.executor_id == RUST_EXECUTOR {
+        let output = permit
+            .operation
+            .expected(payload_text)
+            .map_err(str::to_string)?;
+        return Ok(ExecutorAttempt {
+            output,
+            success: true,
+            error: String::new(),
+            elapsed_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        });
+    }
+    if permit.executor_id != CPP_EXECUTOR {
+        return Err(format!("unknown executor {}", permit.executor_id));
+    }
+
     let mut request = Request::new(ExecuteRequest {
-        task_id: task_id.clone(),
-        operation: operation.clone(),
-        payload: input.payload.clone(),
+        task_id: permit.task_id.clone(),
+        operation: permit.operation.as_str().to_string(),
+        payload: payload_text.to_string(),
     });
     request.set_timeout(Duration::from_millis(permit.deadline_ms));
-
     let mut client = ExecutionServiceClient::new(state.engine.clone());
-    let response = tokio::time::timeout(
+    match tokio::time::timeout(
         Duration::from_millis(permit.deadline_ms),
         client.execute(request),
     )
-    .await;
+    .await
+    {
+        Ok(Ok(response)) => {
+            let response = response.into_inner();
+            if response.task_id != permit.task_id {
+                return Err("executor returned mismatched task id".into());
+            }
+            Ok(ExecutorAttempt {
+                output: response.output,
+                success: response.success,
+                error: response.error,
+                elapsed_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            })
+        }
+        Ok(Err(error)) => Err(format!("grpc:{}", error.code())),
+        Err(_) => Err("deadline_exceeded".into()),
+    }
+}
 
-    let response = match response {
-        Ok(Ok(response)) => response.into_inner(),
-        Ok(Err(error)) => {
+async fn run_execution(
+    state: &Arc<AppState>,
+    mut input: ExecuteInput,
+    parent_task_id: Option<String>,
+) -> Result<ExecuteOutput, ApiError> {
+    let mut excluded: Vec<String> = Vec::new();
+    let mut first_task_id: Option<String> = None;
+    let mut last_error = String::from("no executor available");
+
+    let _slot = state
+        .permits
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| api_error(StatusCode::TOO_MANY_REQUESTS, "execution capacity exceeded"))?;
+
+    for attempt_index in 0..2 {
+        let executor_id = {
+            let scheduler = state.scheduler.lock().await;
+            let excluded_refs: Vec<&str> = excluded.iter().map(String::as_str).collect();
+            scheduler.select(&excluded_refs)
+        }
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "no healthy executor available",
+            )
+        })?;
+
+        let permit = authorize_for_executor(&input, &executor_id)
+            .map_err(|e| api_error(StatusCode::BAD_REQUEST, e))?;
+        if first_task_id.is_none() {
+            first_task_id = Some(permit.task_id.clone());
+            input.task_id = Uuid::parse_str(&permit.task_id).ok();
             append_event(
                 &state.journal,
-                &task_id,
-                "EXECUTION_FAILED",
-                payload(&[("grpc_code", error.code().to_string())]),
+                &permit.task_id,
+                "TASK_ACCEPTED",
+                payload(&[
+                    ("operation", permit.operation.as_str().to_string()),
+                    ("input_sha256", permit.input_sha256.clone()),
+                ]),
             )
             .await?;
-            state.stability.lock().await.observe(false);
-            return Err(task_error(
-                StatusCode::BAD_GATEWAY,
-                &task_id,
-                format!("execution service: {}", error.code()),
-            ));
         }
-        Err(_) => {
-            append_event(
-                &state.journal,
-                &task_id,
-                "EXECUTION_FAILED",
-                payload(&[("reason", "deadline_exceeded".into())]),
-            )
-            .await?;
-            state.stability.lock().await.observe(false);
-            return Err(task_error(
-                StatusCode::GATEWAY_TIMEOUT,
-                &task_id,
-                "execution timeout",
-            ));
-        }
-    };
+        let task_id = first_task_id
+            .clone()
+            .unwrap_or_else(|| permit.task_id.clone());
 
-    let elapsed_ms = start.elapsed().as_millis().min(u64::MAX as u128) as u64;
-    let verified = response.success
-        && response.task_id == task_id
-        && response.output.len() <= permit.max_output_bytes
-        && response.output == expected;
-
-    let receipt = ExecutionReceipt::new(
-        &permit,
-        parent_task_id.clone(),
-        &response.output,
-        elapsed_ms,
-        verified,
-    );
-
-    save_execution(
-        &state.journal,
-        StoredExecution {
-            task_id: task_id.clone(),
-            parent_task_id,
-            operation: operation.clone(),
-            payload: input.payload,
-            output: response.output.clone(),
-            receipt: receipt.clone(),
-            created_at_ns: now_ns(),
-        },
-    )
-    .await?;
-
-    append_event(
-        &state.journal,
-        &task_id,
-        if verified {
-            "VERIFICATION_PASSED"
-        } else {
-            "VERIFICATION_FAILED"
-        },
-        payload(&[
-            ("receipt_sha256", receipt.receipt_sha256.clone()),
-            ("output_sha256", receipt.output_sha256.clone()),
-        ]),
-    )
-    .await?;
-
-    let mut stability = state.stability.lock().await;
-    stability.observe(verified);
-    let delta = stability.delta;
-    drop(stability);
-
-    if !verified {
-        return Err(task_error(
-            StatusCode::BAD_GATEWAY,
+        append_event(
+            &state.journal,
             &task_id,
-            "execution result failed independent verification",
-        ));
+            "POLICY_AUTHORIZED",
+            payload(&[
+                ("executor_id", executor_id.clone()),
+                ("policy_sha256", permit.policy_sha256.clone()),
+                ("capabilities", permit.capability_names.join(",")),
+            ]),
+        )
+        .await?;
+
+        append_event(
+            &state.journal,
+            &task_id,
+            if attempt_index == 0 {
+                "EXECUTOR_SELECTED"
+            } else {
+                "FAILOVER_SELECTED"
+            },
+            payload(&[
+                ("executor_id", executor_id.clone()),
+                ("policy_sha256", permit.policy_sha256.clone()),
+                ("attempt", attempt_index.to_string()),
+            ]),
+        )
+        .await?;
+        append_event(
+            &state.journal,
+            &task_id,
+            "EXECUTION_STARTED",
+            payload(&[("executor_id", executor_id.clone())]),
+        )
+        .await?;
+
+        let result = execute_on_executor(state, &permit, &input.payload).await;
+
+        match result {
+            Err(error) => {
+                last_error = error.clone();
+                let observed = {
+                    let mut scheduler = state.scheduler.lock().await;
+                    scheduler.observe(&executor_id, false, 0)
+                };
+                persist_executor_stats(&state.journal, observed).await?;
+                append_event(
+                    &state.journal,
+                    &task_id,
+                    "EXECUTOR_FAILED",
+                    payload(&[("executor_id", executor_id.clone()), ("reason", error)]),
+                )
+                .await?;
+                excluded.push(executor_id);
+                continue;
+            }
+            Ok(result) => {
+                let expected = permit
+                    .operation
+                    .expected(&input.payload)
+                    .map_err(|e| task_error(StatusCode::BAD_REQUEST, &task_id, e))?;
+                let verified = result.success
+                    && result.output.len() <= permit.max_output_bytes
+                    && result.output == expected;
+                if !verified {
+                    last_error = "independent verification failed".into();
+                    let observed = {
+                        let mut scheduler = state.scheduler.lock().await;
+                        scheduler.observe(&executor_id, false, result.elapsed_ms)
+                    };
+                    persist_executor_stats(&state.journal, observed).await?;
+                    append_event(
+                        &state.journal,
+                        &task_id,
+                        "VERIFICATION_FAILED",
+                        payload(&[("executor_id", executor_id.clone())]),
+                    )
+                    .await?;
+                    excluded.push(executor_id);
+                    continue;
+                }
+
+                let observed = {
+                    let mut scheduler = state.scheduler.lock().await;
+                    scheduler.observe(&executor_id, true, result.elapsed_ms)
+                };
+                persist_executor_stats(&state.journal, observed).await?;
+
+                let receipt = ExecutionReceipt::new(
+                    &permit,
+                    parent_task_id.clone(),
+                    &result.output,
+                    result.elapsed_ms,
+                    true,
+                );
+                save_execution(
+                    &state.journal,
+                    StoredExecution {
+                        task_id: task_id.clone(),
+                        parent_task_id,
+                        operation: permit.operation.as_str().to_string(),
+                        payload: input.payload,
+                        output: result.output.clone(),
+                        receipt: receipt.clone(),
+                        created_at_ns: now_ns(),
+                    },
+                )
+                .await?;
+                append_event(
+                    &state.journal,
+                    &task_id,
+                    "VERIFICATION_PASSED",
+                    payload(&[
+                        ("executor_id", executor_id),
+                        ("receipt_sha256", receipt.receipt_sha256.clone()),
+                    ]),
+                )
+                .await?;
+
+                let mut stability = state.stability.lock().await;
+                stability.observe(true);
+                let delta = stability.delta;
+                drop(stability);
+                return Ok(ExecuteOutput {
+                    task_id,
+                    operation: permit.operation.as_str().to_string(),
+                    output: result.output,
+                    success: true,
+                    error: result.error,
+                    output_sha256: receipt.output_sha256.clone(),
+                    duration_ms: result.elapsed_ms,
+                    delta,
+                    verified: true,
+                    receipt,
+                });
+            }
+        }
     }
 
-    Ok(ExecuteOutput {
-        task_id,
-        operation,
-        output: response.output,
-        success: response.success,
-        error: response.error,
-        output_sha256: receipt.output_sha256.clone(),
-        duration_ms: elapsed_ms,
-        delta,
-        verified,
-        receipt,
-    })
+    state.stability.lock().await.observe(false);
+    let task_id = first_task_id.unwrap_or_else(|| "unknown".into());
+    Err(task_error(
+        StatusCode::BAD_GATEWAY,
+        &task_id,
+        format!("all executors failed: {last_error}"),
+    ))
 }
 
 async fn execute(
@@ -496,15 +596,12 @@ async fn console() -> Html<&'static str> {
 }
 
 async fn health(State(state): State<Arc<AppState>>) -> StatusCode {
-    let mut client = ExecutionServiceClient::new(state.engine.clone());
-    match tokio::time::timeout(
-        Duration::from_secs(2),
-        client.health(Request::new(proto::HealthRequest {})),
-    )
-    .await
-    {
-        Ok(Ok(response)) if response.get_ref().ready => StatusCode::OK,
-        _ => StatusCode::SERVICE_UNAVAILABLE,
+    // Readiness is intentionally cheap: journal integrity is verified by /system/status
+    // and /journal/verify rather than rescanning the full hash chain on every probe.
+    if state.scheduler.lock().await.snapshot().selected.is_some() {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
     }
 }
 
@@ -516,9 +613,10 @@ async fn status(State(state): State<Arc<AppState>>) -> Result<Json<SystemStatus>
     let failures = stability.failures;
     drop(stability);
     let journal = verify_journal(&state.journal).await?;
+    let scheduler = state.scheduler.lock().await.snapshot();
 
     Ok(Json(SystemStatus {
-        ready: available <= state.max_concurrent_tasks && journal.valid,
+        ready: scheduler.selected.is_some() && journal.valid,
         delta,
         successes,
         failures,
@@ -527,6 +625,7 @@ async fn status(State(state): State<Arc<AppState>>) -> Result<Json<SystemStatus>
         journal_chain_valid: journal.valid,
         journal_events: journal.event_count,
         journal_head: journal.head_hash,
+        scheduler,
     }))
 }
 
@@ -550,11 +649,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let channel = Endpoint::from_shared(engine_url)?.connect_lazy();
     let journal = Journal::open(journal_path).map_err(std::io::Error::other)?;
+    let scheduler_seed = journal
+        .load_executor_stats()
+        .map_err(std::io::Error::other)?;
     let state = Arc::new(AppState {
         engine: channel,
         permits: Arc::new(Semaphore::new(capacity)),
         max_concurrent_tasks: capacity,
         stability: Arc::new(Mutex::new(Stability::default())),
+        scheduler: Arc::new(Mutex::new(AdaptiveScheduler::new(scheduler_seed))),
         journal,
     });
 

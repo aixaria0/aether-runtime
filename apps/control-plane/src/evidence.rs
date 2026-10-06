@@ -163,15 +163,18 @@ pub fn compare_receipts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::{authorize, ExecuteInput};
+    use crate::kernel::{authorize_for_executor, ExecuteInput};
 
     fn permit(payload: &str) -> ExecutionPermit {
-        authorize(&ExecuteInput {
-            operation: "echo".into(),
-            payload: payload.into(),
-            task_id: None,
-            deadline_ms: 5_000,
-        })
+        authorize_for_executor(
+            &ExecuteInput {
+                operation: "echo".into(),
+                payload: payload.into(),
+                task_id: None,
+                deadline_ms: 5_000,
+            },
+            "cpp-grpc-v1",
+        )
         .unwrap()
     }
 

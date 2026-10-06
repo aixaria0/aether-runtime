@@ -67,6 +67,7 @@ def main():
     assert event_types == [
         "TASK_ACCEPTED",
         "POLICY_AUTHORIZED",
+        "EXECUTOR_SELECTED",
         "EXECUTION_STARTED",
         "VERIFICATION_PASSED",
     ], event_types
@@ -106,6 +107,10 @@ def main():
         assert status["journal_chain_valid"] is True
         assert status["journal_events"] >= 21
         assert status["journal_head"]
+        assert status["ready"] is True
+        assert status["scheduler"]["selected"] in {"cpp-grpc-v1", "rust-builtin-v1"}
+        executors = {item["executor_id"] for item in status["scheduler"]["executors"]}
+        assert executors == {"cpp-grpc-v1", "rust-builtin-v1"}, executors
 
     print("Aether evidence + replay end-to-end pipeline: PASS")
 

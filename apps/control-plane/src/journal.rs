@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::evidence::ExecutionReceipt;
+use crate::{evidence::ExecutionReceipt, scheduler::ExecutorStats};
 
 #[derive(Clone, Debug)]
 pub struct Journal {
@@ -100,6 +100,15 @@ impl Journal {
 
             CREATE INDEX IF NOT EXISTS idx_execution_events_task
                 ON execution_events(task_id, sequence);
+
+            CREATE TABLE IF NOT EXISTS executor_stats (
+                executor_id TEXT PRIMARY KEY,
+                successes INTEGER NOT NULL,
+                failures INTEGER NOT NULL,
+                consecutive_failures INTEGER NOT NULL,
+                ewma_latency_ms REAL NOT NULL,
+                quarantined_until_ns INTEGER NOT NULL
+            );
             "#,
         )
         .map_err(|e| e.to_string())?;
@@ -247,6 +256,44 @@ impl Journal {
             .map_err(|e| e.to_string())
     }
 
+    pub fn load_executor_stats(&self) -> Result<Vec<ExecutorStats>, String> {
+        let conn = self.connect()?;
+        let mut stmt = conn
+            .prepare("SELECT executor_id, successes, failures, consecutive_failures, ewma_latency_ms, quarantined_until_ns FROM executor_stats ORDER BY executor_id")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ExecutorStats {
+                    executor_id: row.get(0)?,
+                    successes: row.get::<_, i64>(1)? as u64,
+                    failures: row.get::<_, i64>(2)? as u64,
+                    consecutive_failures: row.get::<_, i64>(3)? as u32,
+                    ewma_latency_ms: row.get(4)?,
+                    quarantined_until_ns: row.get::<_, i64>(5)? as u64,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn save_executor_stats(&self, stats: &ExecutorStats) -> Result<(), String> {
+        let conn = self.connect()?;
+        conn.execute(
+            "INSERT INTO executor_stats(executor_id, successes, failures, consecutive_failures, ewma_latency_ms, quarantined_until_ns) VALUES(?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(executor_id) DO UPDATE SET successes=excluded.successes, failures=excluded.failures, consecutive_failures=excluded.consecutive_failures, ewma_latency_ms=excluded.ewma_latency_ms, quarantined_until_ns=excluded.quarantined_until_ns",
+            params![
+                stats.executor_id,
+                stats.successes as i64,
+                stats.failures as i64,
+                stats.consecutive_failures as i64,
+                stats.ewma_latency_ms,
+                stats.quarantined_until_ns as i64,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub fn verify_chain(&self) -> Result<JournalVerification, String> {
         let conn = self.connect()?;
         let mut stmt = conn
@@ -338,7 +385,7 @@ mod tests {
     use super::*;
     use crate::{
         evidence::ExecutionReceipt,
-        kernel::{authorize, ExecuteInput},
+        kernel::{authorize_for_executor, ExecuteInput},
     };
 
     fn path() -> PathBuf {
@@ -346,12 +393,15 @@ mod tests {
     }
 
     fn sample_receipt() -> ExecutionReceipt {
-        let permit = authorize(&ExecuteInput {
-            operation: "echo".into(),
-            payload: "abc".into(),
-            task_id: None,
-            deadline_ms: 1_000,
-        })
+        let permit = authorize_for_executor(
+            &ExecuteInput {
+                operation: "echo".into(),
+                payload: "abc".into(),
+                task_id: None,
+                deadline_ms: 1_000,
+            },
+            "cpp-grpc-v1",
+        )
         .unwrap();
         ExecutionReceipt::new(&permit, None, "abc", 1, true)
     }
@@ -383,6 +433,33 @@ mod tests {
         let reopened = Journal::open(&path).unwrap();
         assert!(reopened.verify_chain().unwrap().valid);
         assert!(reopened.load_execution(&receipt.task_id).unwrap().is_some());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn executor_stats_survive_reopen() {
+        let path = path();
+        let journal = Journal::open(&path).unwrap();
+        let stats = ExecutorStats {
+            executor_id: "cpp-grpc-v1".into(),
+            successes: 7,
+            failures: 2,
+            consecutive_failures: 1,
+            ewma_latency_ms: 4.5,
+            quarantined_until_ns: 99,
+        };
+        journal.save_executor_stats(&stats).unwrap();
+        drop(journal);
+
+        let reopened = Journal::open(&path).unwrap();
+        let loaded = reopened.load_executor_stats().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].executor_id, stats.executor_id);
+        assert_eq!(loaded[0].successes, 7);
+        assert_eq!(loaded[0].failures, 2);
+        assert_eq!(loaded[0].consecutive_failures, 1);
+        assert_eq!(loaded[0].ewma_latency_ms, 4.5);
+        assert_eq!(loaded[0].quarantined_until_ns, 99);
         let _ = fs::remove_file(path);
     }
 

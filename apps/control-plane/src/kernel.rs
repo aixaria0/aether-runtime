@@ -6,7 +6,6 @@ pub const MAX_INPUT_BYTES: usize = 65_536;
 pub const MAX_OUTPUT_BYTES: usize = 65_536;
 pub const MAX_DEADLINE_MS: u64 = 10_000;
 pub const POLICY_REVISION: u32 = 1;
-pub const EXECUTOR_ID: &str = "cpp-grpc-v1";
 
 pub const CAP_COMPUTE: u64 = 1 << 0;
 pub const CAP_FILE_READ: u64 = 1 << 1;
@@ -89,7 +88,10 @@ pub struct ExecutionPermit {
     pub executor_identity_sha256: String,
 }
 
-pub fn authorize(input: &ExecuteInput) -> Result<ExecutionPermit, &'static str> {
+pub fn authorize_for_executor(
+    input: &ExecuteInput,
+    executor_id: &str,
+) -> Result<ExecutionPermit, &'static str> {
     if input.payload.len() > MAX_INPUT_BYTES {
         return Err("payload exceeds 64 KiB");
     }
@@ -102,7 +104,7 @@ pub fn authorize(input: &ExecuteInput) -> Result<ExecutionPermit, &'static str> 
     let capabilities = operation.capabilities();
     let task_id = input.task_id.unwrap_or_else(Uuid::new_v4).to_string();
     let input_sha256 = sha256_hex(input.payload.as_bytes());
-    let executor_identity_sha256 = sha256_hex(EXECUTOR_ID.as_bytes());
+    let executor_identity_sha256 = sha256_hex(executor_id.as_bytes());
 
     let policy_descriptor = format!(
         "aether-policy-v{}|operation={}|capabilities={}|max-input={}|max-output={}|deadline-ms={}|executor={}",
@@ -112,7 +114,7 @@ pub fn authorize(input: &ExecuteInput) -> Result<ExecutionPermit, &'static str> 
         MAX_INPUT_BYTES,
         MAX_OUTPUT_BYTES,
         input.deadline_ms,
-        EXECUTOR_ID,
+        executor_id,
     );
 
     Ok(ExecutionPermit {
@@ -126,7 +128,7 @@ pub fn authorize(input: &ExecuteInput) -> Result<ExecutionPermit, &'static str> 
         policy_revision: POLICY_REVISION,
         deadline_ms: input.deadline_ms,
         max_output_bytes: MAX_OUTPUT_BYTES,
-        executor_id: EXECUTOR_ID.to_string(),
+        executor_id: executor_id.to_string(),
         executor_identity_sha256,
     })
 }
@@ -164,19 +166,23 @@ mod tests {
         }
     }
 
+    fn auth(input: &ExecuteInput) -> Result<ExecutionPermit, &'static str> {
+        authorize_for_executor(input, "cpp-grpc-v1")
+    }
+
     #[test]
     fn admission_is_bounded_and_typed() {
-        assert!(authorize(&input("echo", "ok", 1_000)).is_ok());
-        assert!(authorize(&input("shell", "id", 1_000)).is_err());
-        assert!(authorize(&input("echo", "ok", 0)).is_err());
-        assert!(authorize(&input("echo", "ok", 10_001)).is_err());
-        assert!(authorize(&input("uppercase", "é", 1_000)).is_err());
+        assert!(auth(&input("echo", "ok", 1_000)).is_ok());
+        assert!(auth(&input("shell", "id", 1_000)).is_err());
+        assert!(auth(&input("echo", "ok", 0)).is_err());
+        assert!(auth(&input("echo", "ok", 10_001)).is_err());
+        assert!(auth(&input("uppercase", "é", 1_000)).is_err());
     }
 
     #[test]
     fn permit_fingerprints_are_deterministic_for_policy_and_input() {
-        let a = authorize(&input("sha256", "abc", 5_000)).unwrap();
-        let b = authorize(&input("sha256", "abc", 5_000)).unwrap();
+        let a = auth(&input("sha256", "abc", 5_000)).unwrap();
+        let b = auth(&input("sha256", "abc", 5_000)).unwrap();
         assert_eq!(a.input_sha256, b.input_sha256);
         assert_eq!(a.policy_sha256, b.policy_sha256);
         assert_eq!(a.executor_identity_sha256, b.executor_identity_sha256);

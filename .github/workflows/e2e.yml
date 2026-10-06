@@ -42,3 +42,37 @@ jobs:
         run: rustup toolchain install 1.90.0 --profile minimal
       - name: Native two-process core smoke
         run: bash tests/native-e2e.sh
+  adaptive-failover-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Build and start fresh core
+        run: docker compose up --build -d execution-engine control-plane
+      - name: Wait for runtime readiness
+        run: |
+          for i in $(seq 1 60); do
+            if curl --fail --silent http://localhost:8080/health >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker compose logs
+          exit 1
+      - name: Remove native executor and prove verified failover
+        run: |
+          docker compose stop execution-engine
+          python3 tests/failover_e2e.py
+      - name: Restart control plane and prove durable failure memory
+        run: |
+          docker compose restart control-plane
+          for i in $(seq 1 60); do
+            if curl --fail --silent http://localhost:8080/health >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://localhost:8080/health >/dev/null
+          python3 tests/failover_e2e.py --post-restart
+      - name: Container logs
+        if: always()
+        run: docker compose logs --no-color --tail=160
+      - name: Shutdown
+        if: always()
+        run: docker compose down -v --remove-orphans
