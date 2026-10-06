@@ -4,14 +4,20 @@ services:
       context: .
       dockerfile: apps/execution-engine/Dockerfile
     expose: ["50051"]
+
   control-plane:
     build:
       context: .
       dockerfile: apps/control-plane/Dockerfile
     environment:
       ENGINE_URL: http://execution-engine:50051
+      AETHER_JOURNAL_PATH: /data/aether-journal.sqlite3
+      MAX_CONCURRENT_TASKS: ${MAX_CONCURRENT_TASKS:-32}
     ports: ["8080:8080"]
+    volumes:
+      - aether-data:/data
     depends_on: [execution-engine]
+
   temporal:
     image: temporalio/auto-setup:1.27.2
     profiles: ["workflow"]
@@ -23,6 +29,7 @@ services:
       POSTGRES_SEEDS: temporal-db
     ports: ["7233:7233"]
     depends_on: [temporal-db]
+
   temporal-db:
     image: postgres:16
     profiles: ["workflow"]
@@ -30,6 +37,7 @@ services:
       POSTGRES_USER: temporal
       POSTGRES_PASSWORD: temporal-local-only
     volumes: [temporal-data:/var/lib/postgresql/data]
+
   agent-service:
     build: ./apps/agent-service
     profiles: ["ai"]
@@ -38,5 +46,7 @@ services:
       MODEL_NAME: ${MODEL_NAME:-openai/gpt-4o-mini}
       ENGINE_API: http://control-plane:8080
     depends_on: [control-plane]
+
 volumes:
+  aether-data:
   temporal-data:

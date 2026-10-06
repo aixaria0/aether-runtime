@@ -8,6 +8,7 @@ ENGINE_BIN="$ENGINE_BUILD/aether-execution-engine"
 CONTROL_BIN="$ROOT/apps/control-plane/target/release/aether-control-plane"
 ENGINE_LOG="$BUILD_DIR/execution-engine.log"
 CONTROL_LOG="$BUILD_DIR/control-plane.log"
+JOURNAL_PATH="$BUILD_DIR/aether-journal.sqlite3"
 ENGINE_PID=""
 CONTROL_PID=""
 
@@ -26,9 +27,11 @@ ctest --test-dir "$ENGINE_BUILD" --output-on-failure
 
 cargo +1.90.0 build --locked --release --manifest-path "$ROOT/apps/control-plane/Cargo.toml"
 
+rm -f "$JOURNAL_PATH" "$JOURNAL_PATH-wal" "$JOURNAL_PATH-shm"
+
 "$ENGINE_BIN" >"$ENGINE_LOG" 2>&1 &
 ENGINE_PID=$!
-ENGINE_URL=http://127.0.0.1:50051 MAX_CONCURRENT_TASKS=8 \
+ENGINE_URL=http://127.0.0.1:50051 MAX_CONCURRENT_TASKS=8 AETHER_JOURNAL_PATH="$JOURNAL_PATH" \
   "$CONTROL_BIN" >"$CONTROL_LOG" 2>&1 &
 CONTROL_PID=$!
 
