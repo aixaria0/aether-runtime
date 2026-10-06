@@ -32,7 +32,14 @@ def main():
     with urllib.request.urlopen(BASE + "/health", timeout=20) as response:
         assert response.status == 200
 
+    code, identity = request_json("/identity")
+    assert code == 200
+    assert identity["algorithm"] == "ed25519"
+    assert len(identity["public_key_hex"]) == 64
+    assert len(identity["fingerprint_sha256"]) == 64
+
     first_task = None
+    first_receipt = None
     for operation, input_payload, expected in (
         ("echo", "Hello", "Hello"),
         ("uppercase", "hello", "HELLO"),
@@ -54,21 +61,41 @@ def main():
         assert receipt["verified"] is True
         assert receipt["capability_names"] == ["compute"]
         assert receipt["executor_id"] == "cpp-grpc-v1"
+        attestation = receipt["attestation"]
+        assert attestation["algorithm"] == "ed25519"
+        assert attestation["domain"] == "aether.execution-receipt.v1"
+        assert attestation["public_key_hex"] == identity["public_key_hex"]
+        assert attestation["key_fingerprint_sha256"] == identity["fingerprint_sha256"]
+        assert len(attestation["signature_hex"]) == 128
+        code, verification = request_json("/verify/receipt", "POST", receipt)
+        assert code == 200
+        assert verification["valid"] is True, verification
         if first_task is None:
             first_task = body["task_id"]
+            first_receipt = receipt
 
     assert first_task
+    assert first_receipt
+
+    tampered = dict(first_receipt)
+    tampered["output_sha256"] = "00" * 32
+    code, verification = request_json("/verify/receipt", "POST", tampered)
+    assert code == 200
+    assert verification["valid"] is False
+    assert verification["digest_matches"] is False
     code, evidence = request_json(f"/evidence/{first_task}")
     assert code == 200
     assert evidence["execution"]["task_id"] == first_task
     assert evidence["execution"]["payload"] == "Hello"
     assert evidence["chain"]["valid"] is True
+    assert evidence["receipt_verification"]["valid"] is True
     event_types = [event["event_type"] for event in evidence["events"]]
     assert event_types == [
         "TASK_ACCEPTED",
         "POLICY_AUTHORIZED",
         "EXECUTOR_SELECTED",
         "EXECUTION_STARTED",
+        "RECEIPT_SIGNED",
         "VERIFICATION_PASSED",
     ], event_types
 
@@ -108,6 +135,7 @@ def main():
         assert status["journal_events"] >= 21
         assert status["journal_head"]
         assert status["ready"] is True
+        assert status["identity"]["fingerprint_sha256"] == identity["fingerprint_sha256"]
         assert status["scheduler"]["selected"] in {"cpp-grpc-v1", "rust-builtin-v1"}
         executors = {item["executor_id"] for item in status["scheduler"]["executors"]}
         assert executors == {"cpp-grpc-v1", "rust-builtin-v1"}, executors

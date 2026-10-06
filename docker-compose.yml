@@ -12,6 +12,7 @@ services:
     environment:
       ENGINE_URL: http://execution-engine:50051
       AETHER_JOURNAL_PATH: /data/aether-journal.sqlite3
+      AETHER_IDENTITY_PATH: /data/aether-identity.key
       MAX_CONCURRENT_TASKS: ${MAX_CONCURRENT_TASKS:-32}
     ports: ["8080:8080"]
     volumes:
