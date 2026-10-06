@@ -46,8 +46,7 @@ def main():
         post("shell", "id")
         raise AssertionError("unexpected acceptance of unsupported operation")
     except urllib.error.HTTPError as error:
-        # Axum JSON extraction rejects an unknown enum before the handler runs.
-        assert error.code == 422
+        assert error.code == 400
 
     for rejected in (
         {"operation": "echo", "payload": "abc", "deadline_ms": 0},
