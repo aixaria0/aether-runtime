@@ -19,11 +19,13 @@ use tonic::{
 };
 
 mod evidence;
+mod identity;
 mod journal;
 mod kernel;
 mod scheduler;
 
-use evidence::{compare_receipts, ExecutionReceipt, ReplayComparison};
+use evidence::{compare_receipts, ExecutionReceipt, ReceiptVerification, ReplayComparison};
+use identity::{Identity, IdentityInfo};
 use journal::{now_ns, Journal, JournalEvent, JournalVerification, StoredExecution};
 use kernel::{authorize_for_executor, ExecuteInput, ExecutionPermit};
 use scheduler::{AdaptiveScheduler, SchedulerSnapshot, CPP_EXECUTOR, RUST_EXECUTOR};
@@ -43,6 +45,7 @@ struct AppState {
     stability: Arc<Mutex<Stability>>,
     journal: Journal,
     scheduler: Arc<Mutex<AdaptiveScheduler>>,
+    identity: Identity,
 }
 
 #[derive(Debug)]
@@ -101,6 +104,7 @@ struct SystemStatus {
     journal_events: u64,
     journal_head: Option<String>,
     scheduler: SchedulerSnapshot,
+    identity: IdentityInfo,
 }
 
 #[derive(Serialize)]
@@ -108,6 +112,7 @@ struct EvidenceResponse {
     execution: StoredExecution,
     events: Vec<JournalEvent>,
     chain: JournalVerification,
+    receipt_verification: ReceiptVerification,
 }
 
 #[derive(Serialize)]
@@ -465,13 +470,14 @@ async fn run_execution(
                 };
                 persist_executor_stats(&state.journal, observed).await?;
 
-                let receipt = ExecutionReceipt::new(
+                let mut receipt = ExecutionReceipt::new(
                     &permit,
                     parent_task_id.clone(),
                     &result.output,
                     result.elapsed_ms,
                     true,
                 );
+                receipt.attest(&state.identity);
                 save_execution(
                     &state.journal,
                     StoredExecution {
@@ -483,6 +489,24 @@ async fn run_execution(
                         receipt: receipt.clone(),
                         created_at_ns: now_ns(),
                     },
+                )
+                .await?;
+                let attestation = receipt
+                    .attestation
+                    .as_ref()
+                    .expect("new receipts are always attested");
+                append_event(
+                    &state.journal,
+                    &task_id,
+                    "RECEIPT_SIGNED",
+                    payload(&[
+                        ("algorithm", attestation.algorithm.clone()),
+                        (
+                            "signer_fingerprint",
+                            attestation.key_fingerprint_sha256.clone(),
+                        ),
+                        ("receipt_sha256", receipt.receipt_sha256.clone()),
+                    ]),
                 )
                 .await?;
                 append_event(
@@ -541,11 +565,21 @@ async fn evidence(
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "task evidence not found"))?;
     let events = events_for_task(&state.journal, task_id).await?;
     let chain = verify_journal(&state.journal).await?;
+    let receipt_verification = execution.receipt.verify_attestation();
     Ok(Json(EvidenceResponse {
         execution,
         events,
         chain,
+        receipt_verification,
     }))
+}
+
+async fn identity_info(State(state): State<Arc<AppState>>) -> Json<IdentityInfo> {
+    Json(state.identity.info())
+}
+
+async fn verify_receipt(Json(receipt): Json<ExecutionReceipt>) -> Json<ReceiptVerification> {
+    Json(receipt.verify_attestation())
 }
 
 async fn replay(
@@ -626,6 +660,7 @@ async fn status(State(state): State<Arc<AppState>>) -> Result<Json<SystemStatus>
         journal_events: journal.event_count,
         journal_head: journal.head_hash,
         scheduler,
+        identity: state.identity.info(),
     }))
 }
 
@@ -646,18 +681,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(32);
     let journal_path =
         env::var("AETHER_JOURNAL_PATH").unwrap_or_else(|_| "./aether-journal.sqlite3".into());
+    let identity_path =
+        env::var("AETHER_IDENTITY_PATH").unwrap_or_else(|_| "./aether-identity.key".into());
 
     let channel = Endpoint::from_shared(engine_url)?.connect_lazy();
     let journal = Journal::open(journal_path).map_err(std::io::Error::other)?;
     let scheduler_seed = journal
         .load_executor_stats()
         .map_err(std::io::Error::other)?;
+    let identity = Identity::load_or_create(identity_path).map_err(std::io::Error::other)?;
     let state = Arc::new(AppState {
         engine: channel,
         permits: Arc::new(Semaphore::new(capacity)),
         max_concurrent_tasks: capacity,
         stability: Arc::new(Mutex::new(Stability::default())),
         scheduler: Arc::new(Mutex::new(AdaptiveScheduler::new(scheduler_seed))),
+        identity,
         journal,
     });
 
@@ -666,6 +705,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/health", get(health))
         .route("/system/status", get(status))
         .route("/journal/verify", get(journal_verify))
+        .route("/identity", get(identity_info))
+        .route("/verify/receipt", post(verify_receipt))
         .route("/execute", post(execute))
         .route("/evidence/{task_id}", get(evidence))
         .route("/replay/{task_id}", post(replay))
