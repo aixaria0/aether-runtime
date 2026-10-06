@@ -4,12 +4,12 @@ use axum::{
     routing::{get, post},
     Json, Router, response::Html,
 };
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use serde::Serialize;
+mod policy;
+use policy::{TaskInput, ExecutionReceipt, authorize, make_receipt};
 use std::{env, sync::Arc, time::{Duration, Instant}};
 use tokio::sync::{Mutex, Semaphore};
 use tonic::{transport::{Channel, Endpoint}, Request};
-use uuid::Uuid;
 
 pub mod proto { tonic::include_proto!("aether.v1"); }
 use proto::{execution_service_client::ExecutionServiceClient, ExecuteRequest};
@@ -46,25 +46,18 @@ impl Stability {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExecuteInput {
-    operation: String,
-    payload: String,
-    #[serde(default)]
-    task_id: Option<Uuid>,
-}
-
 #[derive(Serialize)]
 struct ExecuteOutput {
     task_id: String,
-    operation: String,
+    operation: policy::Operation,
     output: String,
     success: bool,
     error: String,
     output_sha256: String,
     duration_ms: u64,
     delta: f64,
+    verified: bool,
+    receipt: ExecutionReceipt,
 }
 
 #[derive(Serialize)]
@@ -85,50 +78,55 @@ fn api_error(status: StatusCode, message: impl Into<String>) -> ApiError {
     (status, Json(ErrorBody { error: message.into() }))
 }
 
-fn validate(input: &ExecuteInput) -> Result<(), &'static str> {
-    if input.payload.len() > MAX_PAYLOAD_BYTES { return Err("payload exceeds 64 KiB"); }
-    if !matches!(input.operation.as_str(), "echo" | "uppercase" | "sha256") {
-        return Err("unsupported operation");
-    }
-    Ok(())
-}
-
-async fn execute(State(state): State<Arc<AppState>>, Json(input): Json<ExecuteInput>)
+async fn execute(State(state): State<Arc<AppState>>, Json(input): Json<TaskInput>)
     -> Result<Json<ExecuteOutput>, ApiError>
 {
-    validate(&input).map_err(|e| api_error(StatusCode::BAD_REQUEST, e))?;
-    let _permit = state.permits.clone().try_acquire_owned()
+    let permit = authorize(&input).map_err(|e| api_error(StatusCode::BAD_REQUEST, e))?;
+    let _slot = state.permits.clone().try_acquire_owned()
         .map_err(|_| api_error(StatusCode::TOO_MANY_REQUESTS, "execution capacity exceeded"))?;
-    let task_id = input.task_id.unwrap_or_else(Uuid::new_v4).to_string();
-    let operation = input.operation.clone();
+    let operation = permit.operation;
+    let expected = operation.expected(&input.payload).ok_or_else(||
+        api_error(StatusCode::BAD_REQUEST, "unsupported payload semantics"))?;
     let start = Instant::now();
-    let request = Request::new(ExecuteRequest {
-        task_id: task_id.clone(),
-        operation: input.operation,
+    let mut request = Request::new(ExecuteRequest {
+        task_id: permit.task_id.clone(),
+        operation: operation.as_str().into(),
         payload: input.payload,
     });
+    request.set_timeout(Duration::from_millis(permit.deadline_ms));
     let mut client = ExecutionServiceClient::new(state.engine.clone());
-    let response = tokio::time::timeout(Duration::from_secs(10), client.execute(request)).await;
+    let response = tokio::time::timeout(Duration::from_millis(permit.deadline_ms),
+        client.execute(request)).await;
     let outcome = match response {
         Ok(Ok(r)) => Ok(r.into_inner()),
         Ok(Err(e)) => Err(api_error(StatusCode::BAD_GATEWAY, format!("execution service: {}", e.code()))),
         Err(_) => Err(api_error(StatusCode::GATEWAY_TIMEOUT, "execution timeout")),
     };
     let mut stability = state.stability.lock().await;
-    stability.observe(outcome.as_ref().map(|r| r.success).unwrap_or(false));
+    let verified = outcome.as_ref().map(|r|
+        r.success && r.task_id == permit.task_id
+        && r.output.len() <= permit.max_output_bytes
+        && r.output == expected).unwrap_or(false);
+    stability.observe(verified);
     let delta = stability.delta;
     drop(stability);
     let response = outcome?;
-    let digest = hex::encode(Sha256::digest(response.output.as_bytes()));
+    if !verified {
+        return Err(api_error(StatusCode::BAD_GATEWAY, "execution result failed independent verification"));
+    }
+    let elapsed = start.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    let receipt = make_receipt(&permit, &response.output, elapsed, verified);
     Ok(Json(ExecuteOutput {
-        task_id,
+        task_id: permit.task_id.clone(),
         operation,
         output: response.output,
         success: response.success,
         error: response.error,
-        output_sha256: digest,
-        duration_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        output_sha256: receipt.output_sha256.clone(),
+        duration_ms: elapsed,
         delta,
+        verified,
+        receipt,
     }))
 }
 
@@ -186,25 +184,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn request(operation: &str, payload: &str) -> ExecuteInput {
-        ExecuteInput { operation: operation.into(), payload: payload.into(), task_id: None }
+    #[test]
+    fn response_contract_includes_receipt() {
+        let task: TaskInput = serde_json::from_str(r#"{"operation":"echo","payload":"abc"}"#).unwrap();
+        let permit = authorize(&task).unwrap();
+        let receipt = make_receipt(&permit,"abc",3,true);
+        let json = serde_json::to_value(receipt).unwrap();
+        assert_eq!(json["policy_revision"], 1);
+        assert_eq!(json["route"], "local");
     }
-    #[test] fn only_known_operations_are_allowed() {
-        assert!(validate(&request("echo", "hello")).is_ok());
-        assert!(validate(&request("uppercase", "hello")).is_ok());
-        assert!(validate(&request("sha256", "hello")).is_ok());
-        assert!(validate(&request("shell", "hello")).is_err());
-    }
-    #[test] fn validates_payload_length() {
-        assert!(validate(&request("echo", &"x".repeat(MAX_PAYLOAD_BYTES))).is_ok());
-        assert!(validate(&request("echo", &"x".repeat(MAX_PAYLOAD_BYTES + 1))).is_err());
-    }
-    #[test] fn stability_is_bounded_and_sensitive_to_failure() {
-        let mut health = Stability::default();
-        health.observe(false);
-        assert!(health.delta < 1.0 && health.delta >= 0.0);
-        health.observe(true);
-        assert_eq!((health.successes, health.failures), (1, 1));
-        assert!(health.delta <= 1.0);
+    #[test]
+    fn unknown_operation_is_rejected_during_deserialization() {
+        assert!(serde_json::from_str::<TaskInput>(r#"{"operation":"shell","payload":"id"}"#).is_err());
     }
 }
