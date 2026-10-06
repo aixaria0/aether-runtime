@@ -1,6 +1,6 @@
 [package]
 name = "aether-control-plane"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
@@ -15,6 +15,7 @@ tower-http = { version = "0.6", features = ["trace"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2 = "0.10"
 hex = "0.4"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [build-dependencies]
 tonic-build = "0.12"
