@@ -72,6 +72,7 @@ def initial_failover():
         "POLICY_AUTHORIZED",
         "FAILOVER_SELECTED",
         "EXECUTION_STARTED",
+        "RECEIPT_SIGNED",
         "VERIFICATION_PASSED",
     ], event_types
 

@@ -95,6 +95,7 @@ def main():
         "POLICY_AUTHORIZED",
         "EXECUTOR_SELECTED",
         "EXECUTION_STARTED",
+        "RECEIPT_SIGNED",
         "VERIFICATION_PASSED",
     ], event_types
 
