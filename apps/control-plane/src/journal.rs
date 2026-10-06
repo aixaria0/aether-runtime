@@ -17,6 +17,8 @@ pub struct Journal {
     path: PathBuf,
 }
 
+type ExecutionRow = (String, Option<String>, String, String, String, String, i64);
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StoredExecution {
     pub task_id: String,
@@ -183,7 +185,7 @@ impl Journal {
 
     pub fn load_execution(&self, task_id: &str) -> Result<Option<StoredExecution>, String> {
         let conn = self.connect()?;
-        let row: Option<(String, Option<String>, String, String, String, String, i64)> = conn
+        let row: Option<ExecutionRow> = conn
             .query_row(
                 "SELECT task_id, parent_task_id, operation, payload, output, receipt_json, created_at_ns FROM executions WHERE task_id = ?1",
                 [task_id],

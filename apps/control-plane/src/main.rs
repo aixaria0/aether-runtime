@@ -26,6 +26,7 @@ use evidence::{compare_receipts, ExecutionReceipt, ReplayComparison};
 use journal::{now_ns, Journal, JournalEvent, JournalVerification, StoredExecution};
 use kernel::{authorize, ExecuteInput};
 
+#[allow(clippy::result_large_err)]
 pub mod proto {
     tonic::include_proto!("aether.v1");
 }

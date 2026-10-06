@@ -142,7 +142,8 @@ pub fn capability_names(mask: u64) -> Vec<String> {
         (CAP_REMOTE_EXECUTE, "remote_execute"),
     ]
     .into_iter()
-    .filter_map(|(bit, name)| (mask & bit != 0).then(|| name.to_string()))
+    .filter(|(bit, _)| mask & *bit != 0)
+    .map(|(_, name)| name.to_string())
     .collect()
 }
 
