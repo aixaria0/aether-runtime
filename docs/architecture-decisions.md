@@ -77,14 +77,42 @@ published `aether-lineage-evidence` (artifact ID `11456396986`), archive digest
 Recorded public fixtures and per-file/source hashes also live in the consumer
 commit; private signing material is excluded.
 
+## Completed bounded journal consumer
+
+The bounded exporter is implemented in Aether commit
+`30dad8ec794e3f27600bfc0a5a5df072e79ba8c4`. Its companion consumer is implemented
+in [OMEGA PR #12](https://github.com/aixaria0/CHIMERA-OMEGA/pull/12), feature commit
+`c34d84801f8e8f839d4339c092760bb617cca9f7`. The exact
+[consumer contract](https://github.com/aixaria0/CHIMERA-OMEGA/blob/c34d84801f8e8f839d4339c092760bb617cca9f7/docs/AETHER_JOURNAL_ADAPTER_V1.md)
+and recorded public fixtures preserve the externally selected context, receipt
+semantics, complete event bytes, acquisition provenance and executable controls.
+
+The consumer independently recomputes genesis-to-selected-head continuity,
+contiguous sequence coverage, unique event IDs, exact checkpoint count/head and
+ordered receipt-event binding for both the selected execution and direct replay
+parent. Its confirmed predicate is
+`SIGNED_AETHER_OPERATION_AND_PINNED_COMPLETE_JOURNAL_BINDING_ONLY`, capped at
+256 events and the existing 1 MiB JSON profile. Nanosecond timestamps remain exact
+hashed decimal strings; they do not establish freshness or observed chronology.
+The first-stage lineage report remains unchanged inside the composed report.
+External anchoring, independent observation and producer binary attestation stay
+UNKNOWN; core OMEGA verdict and target execution stay NOT_RUN.
+
+Executed validation passed 27 Aether Rust tests, native C++/Rust execution/replay,
+read-only exported hash recomputation, stored-byte/journal tampering controls,
+94 OMEGA Rust tests, six Node tests, Clippy with warnings denied, five live complete
+exports, 21 consumer rejections and three producer HTTP 413 controls. The latter
+cover event-count overflow, encoded-byte expansion and oversized database strings.
+All 20 Aether checks passed on the exporter implementation commit. Feature-commit
+references identify implemented code; PR metadata separately records merge state.
+
 ## Next vertical slices
 
-1. Complete the consumer side of the [bounded journal export](journal-export.md):
-   independently recompute existing chain hashes and ordered receipt-event
-   bindings under a caller-selected checkpoint. Keep the first-stage consumer
-   unchanged and require explicit, fail-closed genesis-to-head coverage.
-2. A signer/policy registry supports explicit historical key and semantic revisions.
-3. External journal anchoring binds selected heads outside the replaceable database.
+1. A signer/policy registry supports explicit historical key and semantic revisions.
+2. External journal anchoring binds selected heads outside the replaceable database.
+3. Versioned range exports support larger histories under explicitly selected
+   starting checkpoints and coverage limits, without claiming verification of an
+   unavailable prefix. The v1 genesis-to-head consumer remains unchanged.
 4. Multi-input transformations and validated DAG composition distinguish content
    links, execution provenance and accepted-state transitions.
 5. Per-transformation perturbation/fidelity suites supply actual metric definitions,
