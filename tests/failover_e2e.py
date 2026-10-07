@@ -47,6 +47,9 @@ def execute(payload):
     assert body["success"] is True and body["verified"] is True, body
     assert body["output"] == payload, body
     assert body["receipt"]["executor_id"] == RUST, body["receipt"]
+    _, lineage = request_json(f"/lattice/{body['task_id']}")
+    assert lineage["assessment"]["status"] == "accepted", lineage
+    assert lineage["evidence"]["receipt"]["executor_id"] == RUST
     return body
 
 

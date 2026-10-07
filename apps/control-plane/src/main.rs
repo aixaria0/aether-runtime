@@ -22,6 +22,7 @@ mod evidence;
 mod identity;
 mod journal;
 mod kernel;
+mod lattice;
 mod scheduler;
 
 use evidence::{compare_receipts, ExecutionReceipt, ReceiptVerification, ReplayComparison};
@@ -582,6 +583,40 @@ async fn verify_receipt(Json(receipt): Json<ExecutionReceipt>) -> Json<ReceiptVe
     Json(receipt.verify_attestation())
 }
 
+async fn lattice_ontology() -> Json<serde_json::Value> {
+    Json(serde_json::from_str(lattice::ONTOLOGY).expect("embedded ontology is validated by tests"))
+}
+
+async fn lineage(
+    State(state): State<Arc<AppState>>,
+    Path(task_id): Path<String>,
+) -> Result<Json<lattice::LineageCertificate>, ApiError> {
+    let journal = state.journal.clone();
+    let trusted_fingerprint = state.identity.info().fingerprint_sha256;
+    // SQLite reads, chain verification, signatures and recomputation run off
+    // the async worker, using a single consistent journal read transaction.
+    tokio::task::spawn_blocking(move || {
+        journal.execution_snapshot(&task_id).map(|snapshot| {
+            snapshot.map(|snapshot| lattice::assess(snapshot, &trusted_fingerprint))
+        })
+    })
+    .await
+    .map_err(|e| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("lineage task: {e}"),
+        )
+    })?
+    .map_err(|e| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("lineage read: {e}"),
+        )
+    })?
+    .map(Json)
+    .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "task evidence not found"))
+}
+
 async fn replay(
     State(state): State<Arc<AppState>>,
     Path(task_id): Path<String>,
@@ -709,6 +744,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/verify/receipt", post(verify_receipt))
         .route("/execute", post(execute))
         .route("/evidence/{task_id}", get(evidence))
+        .route("/lattice/ontology", get(lattice_ontology))
+        .route("/lattice/{task_id}", get(lineage))
         .route("/replay/{task_id}", post(replay))
         .with_state(state)
         .layer(tower_http::trace::TraceLayer::new_for_http());
