@@ -139,6 +139,14 @@ recorded fixtures and limitations. That first-stage consumer contract remains
 unchanged: its journal dimension is UNKNOWN. A separate bounded journal consumer
 can evaluate the new exported events and report its own independently computed
 chain and receipt-event predicate without changing the earlier report's meaning.
+That consumer is implemented in
+[OMEGA PR #12](https://github.com/aixaria0/CHIMERA-OMEGA/pull/12), feature commit
+`c34d84801f8e8f839d4339c092760bb617cca9f7`, using exporter source revision
+`30dad8ec794e3f27600bfc0a5a5df072e79ba8c4`. Its
+[exact journal contract](https://github.com/aixaria0/CHIMERA-OMEGA/blob/c34d84801f8e8f839d4339c092760bb617cca9f7/docs/AETHER_JOURNAL_ADAPTER_V1.md)
+requires complete bounded coverage, sequence and hash recomputation, and ordered
+signed/verified event binding for the selected receipt and replay parent. It does
+not claim an external anchor, independent observation or producer build attestation.
 
 ## Verification
 
