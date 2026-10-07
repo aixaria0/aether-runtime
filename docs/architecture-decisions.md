@@ -49,10 +49,40 @@ result/evidence checks. The original ontology is preserved in the context
 archive. Compression, distillation, encryption, randomness and optimization
 classes do not become capabilities merely by appearing there.
 
+## Completed continuation: OMEGA lineage consumer
+
+The first proposed consumer slice is implemented in CHIMERA-OMEGA feature commit
+`8cbd6ddc169d0c641c109e562c3947538c39b057`, merged in
+[PR #11](https://github.com/aixaria0/CHIMERA-OMEGA/pull/11) at
+`91c5e28a0713c50c0b9921a9dfd2c0c98026b412`. It consumes Aether's existing
+certificate and separately exported raw execution bytes, with an external
+context digest selecting trust and source semantics at Aether revision
+`04d785f7beee5ff96d78e092a1d73b79987c9e0e`.
+
+The adapter independently verifies receipt signatures, operation results,
+current compute policy, graph references and authenticated direct replay parents.
+It confirms only signed operation and pinned lineage bindings. The journal
+head/count is a selected reference; full event-chain integrity, receipt-event
+inclusion, independent observation and producer binary attestation remain
+unestablished. Existing OMEGA core verdict rules and the distinct Aether Runtime
+OS importer are preserved. See [the lineage contract](lattice-lineage.md#chimera-boundary)
+and the pinned consumer documentation linked there for exact technical details.
+
+Validation on the feature commit passed all 83 Rust tests, six Node tests,
+Clippy with warnings denied, five live signed exports, eight live rejection
+controls and all six GitHub push/PR checks. The
+[live interop CI run](https://github.com/aixaria0/CHIMERA-OMEGA/actions/runs/37559982734)
+published `aether-lineage-evidence` (artifact ID `11456396986`), archive digest
+`sha256:2673d6671536d16df9ece62257f6a7d24a2606df10c0fc4d5e5aaeb05d7cb0db`.
+Recorded public fixtures and per-file/source hashes also live in the consumer
+commit; private signing material is excluded.
+
 ## Next vertical slices
 
-1. An OMEGA adapter independently selects a trusted signer, versioned operation
-   semantics and journal reference, then consumes this certificate contract.
+1. Export bounded raw journal evidence from the same SQLite snapshot as the
+   certificate. Extend the consumer to recompute existing chain hashes and
+   ordered receipt-event bindings under a caller-selected checkpoint, with
+   explicit coverage limits and fail-closed handling of missing events.
 2. A signer/policy registry supports explicit historical key and semantic revisions.
 3. External journal anchoring binds selected heads outside the replaceable database.
 4. Multi-input transformations and validated DAG composition distinguish content
