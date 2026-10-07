@@ -1,6 +1,7 @@
 FROM rust:1.90.0-bookworm AS builder
 WORKDIR /src
 COPY proto/ proto/
+COPY schemas/ schemas/
 COPY apps/control-plane/ apps/control-plane/
 RUN cargo build --locked --release --manifest-path apps/control-plane/Cargo.toml
 

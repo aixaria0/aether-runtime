@@ -50,6 +50,14 @@ pub struct JournalVerification {
     pub first_invalid_sequence: Option<i64>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ExecutionSnapshot {
+    pub execution: StoredExecution,
+    pub parent: Option<StoredExecution>,
+    pub events: Vec<JournalEvent>,
+    pub chain: JournalVerification,
+}
+
 impl Journal {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, String> {
         let journal = Self { path: path.into() };
@@ -194,6 +202,10 @@ impl Journal {
 
     pub fn load_execution(&self, task_id: &str) -> Result<Option<StoredExecution>, String> {
         let conn = self.connect()?;
+        Self::read_execution(&conn, task_id)
+    }
+
+    fn read_execution(conn: &Connection, task_id: &str) -> Result<Option<StoredExecution>, String> {
         let row: Option<ExecutionRow> = conn
             .query_row(
                 "SELECT task_id, parent_task_id, operation, payload, output, receipt_json, created_at_ns FROM executions WHERE task_id = ?1",
@@ -232,6 +244,10 @@ impl Journal {
 
     pub fn events_for_task(&self, task_id: &str) -> Result<Vec<JournalEvent>, String> {
         let conn = self.connect()?;
+        Self::read_events(&conn, task_id)
+    }
+
+    fn read_events(conn: &Connection, task_id: &str) -> Result<Vec<JournalEvent>, String> {
         let mut stmt = conn
             .prepare(
                 "SELECT sequence, event_id, task_id, event_type, timestamp_ns, payload_json, previous_hash, event_hash FROM execution_events WHERE task_id = ?1 ORDER BY sequence ASC",
@@ -296,6 +312,36 @@ impl Journal {
 
     pub fn verify_chain(&self) -> Result<JournalVerification, String> {
         let conn = self.connect()?;
+        Self::verify_chain_from(&conn)
+    }
+
+    /// All lineage evidence is read from one SQLite snapshot, including the
+    /// parent execution and the hash chain. No semantic graph is persisted.
+    pub fn execution_snapshot(&self, task_id: &str) -> Result<Option<ExecutionSnapshot>, String> {
+        let mut conn = self.connect()?;
+        let transaction = conn.transaction().map_err(|e| e.to_string())?;
+        let Some(execution) = Self::read_execution(&transaction, task_id)? else {
+            return Ok(None);
+        };
+        let parent = execution
+            .receipt
+            .parent_task_id
+            .as_deref()
+            .map(|id| Self::read_execution(&transaction, id))
+            .transpose()?
+            .flatten();
+        let events = Self::read_events(&transaction, task_id)?;
+        let chain = Self::verify_chain_from(&transaction)?;
+        transaction.commit().map_err(|e| e.to_string())?;
+        Ok(Some(ExecutionSnapshot {
+            execution,
+            parent,
+            events,
+            chain,
+        }))
+    }
+
+    fn verify_chain_from(conn: &Connection) -> Result<JournalVerification, String> {
         let mut stmt = conn
             .prepare(
                 "SELECT sequence, event_id, task_id, event_type, timestamp_ns, payload_json, previous_hash, event_hash FROM execution_events ORDER BY sequence ASC",

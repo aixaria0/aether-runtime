@@ -38,6 +38,13 @@ def main():
     assert len(identity["public_key_hex"]) == 64
     assert len(identity["fingerprint_sha256"]) == 64
 
+    code, ontology = request_json("/lattice/ontology")
+    assert code == 200
+    assert ontology["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    assert set(ontology["x-lattice-chronicle"]["entities"]) == {
+        "Agent", "Artifact", "Fracture", "Realm", "Ritual", "Trigger", "Shadow"
+    }
+
     first_task = None
     first_receipt = None
     for operation, input_payload, expected in (
@@ -70,6 +77,24 @@ def main():
         code, verification = request_json("/verify/receipt", "POST", receipt)
         assert code == 200
         assert verification["valid"] is True, verification
+        _, journal_before = request_json("/journal/verify")
+        code, lineage = request_json(f"/lattice/{body['task_id']}")
+        assert code == 200
+        assert lineage["schema"] == "lattice-ontology/v1"
+        assert lineage["assessment"]["status"] == "accepted", lineage
+        assert lineage["assessment"]["failed_invariants"] == []
+        assert len(lineage["invariants"]) == 9
+        assert all(item["passed"] for item in lineage["invariants"])
+        assert lineage["assessment"]["trusted_signer_fingerprint_sha256"] == identity["fingerprint_sha256"]
+        assert lineage["evidence"]["receipt"] == receipt
+        assert lineage["artifacts"][0]["sha256"] == receipt["input_sha256"]
+        assert lineage["artifacts"][1]["sha256"] == receipt["output_sha256"]
+        assert lineage["artifacts"][0]["id"] != lineage["artifacts"][1]["id"]
+        assert lineage["artifacts"][1]["parent"] == lineage["artifacts"][0]["id"]
+        assert lineage["transformation"]["replay_of"] is None
+        assert ontology["x-lattice-chronicle"]["rituals"][operation]["technical_operation"] == operation
+        _, journal_after = request_json("/journal/verify")
+        assert journal_before == journal_after, "lineage inspection must not append events"
         if first_task is None:
             first_task = body["task_id"]
             first_receipt = receipt
@@ -108,6 +133,18 @@ def main():
     assert replay["verification_match"]
     assert replay["replay_task_id"] != first_task
     assert replay["receipt"]["parent_task_id"] == first_task
+    code, replay_lineage = request_json(f"/lattice/{replay['replay_task_id']}")
+    assert code == 200
+    assert replay_lineage["assessment"]["status"] == "accepted", replay_lineage
+    assert replay_lineage["transformation"]["replay_of"] == f"aether:transformation:{first_task}"
+    assert replay_lineage["artifacts"][0]["parent"] is None
+    assert replay_lineage["artifacts"][0]["sha256"] == first_receipt["input_sha256"]
+
+    try:
+        request_json("/lattice/00000000-0000-0000-0000-000000000000")
+        raise AssertionError("missing lineage must return 404")
+    except urllib.error.HTTPError as error:
+        assert error.code == 404
 
     code, journal = request_json("/journal/verify")
     assert code == 200

@@ -1,0 +1,542 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/aixaria0/aether-runtime/main/schemas/lattice-ontology.v1.json",
+  "title": "LatticeChronicle v1 execution lineage certificate",
+  "description": "A derived, unsigned semantic assessment of persisted signed execution evidence. Schema validity alone does not establish evidence validity.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "artifacts",
+    "transformation",
+    "evidence",
+    "invariants",
+    "assessment"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lattice-ontology/v1"
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    },
+    "transformation": {
+      "$ref": "#/$defs/transformation"
+    },
+    "evidence": {
+      "$ref": "#/$defs/evidence"
+    },
+    "invariants": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "items": {
+        "$ref": "#/$defs/invariant"
+      }
+    },
+    "assessment": {
+      "$ref": "#/$defs/assessment"
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "sha256",
+        "parent"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "execution_input",
+            "execution_output"
+          ]
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "transformation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "operation",
+        "input",
+        "output",
+        "evidence_ref",
+        "replay_of"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "operation": {
+          "enum": [
+            "echo",
+            "uppercase",
+            "sha256"
+          ]
+        },
+        "input": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
+        },
+        "evidence_ref": {
+          "type": "string"
+        },
+        "replay_of": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "invariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "passed"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "receipt_attestation",
+            "trusted_signer",
+            "record_binding",
+            "operation_result",
+            "current_policy",
+            "verified_receipt_v2",
+            "journal_integrity",
+            "journal_receipt_binding",
+            "replay_provenance"
+          ]
+        },
+        "passed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "scope",
+        "trusted_signer_fingerprint_sha256",
+        "failed_invariants",
+        "not_evaluated"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "accepted",
+            "rejected"
+          ]
+        },
+        "scope": {
+          "const": "allowlisted_execution_lineage"
+        },
+        "trusted_signer_fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "failed_invariants": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "receipt_attestation",
+              "trusted_signer",
+              "record_binding",
+              "operation_result",
+              "current_policy",
+              "verified_receipt_v2",
+              "journal_integrity",
+              "journal_receipt_binding",
+              "replay_provenance"
+            ]
+          }
+        },
+        "not_evaluated": {
+          "const": [
+            "perturbation_stability",
+            "statistical_entropy",
+            "generalized_model_fidelity",
+            "external_journal_anchor",
+            "executor_binary_attestation"
+          ]
+        }
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "domain",
+        "public_key_hex",
+        "key_fingerprint_sha256",
+        "signature_hex"
+      ],
+      "properties": {
+        "algorithm": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "public_key_hex": {
+          "type": "string"
+        },
+        "key_fingerprint_sha256": {
+          "type": "string"
+        },
+        "signature_hex": {
+          "type": "string"
+        }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "receipt_sha256",
+        "task_id",
+        "permit_id",
+        "input_sha256",
+        "output_sha256",
+        "policy_sha256",
+        "executor_id",
+        "executor_identity_sha256",
+        "receipt_version",
+        "policy_revision",
+        "capabilities",
+        "deadline_ms",
+        "elapsed_ms",
+        "parent_task_id",
+        "operation",
+        "capability_names",
+        "verified"
+      ],
+      "properties": {
+        "receipt_sha256": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "permit_id": {
+          "type": "string"
+        },
+        "input_sha256": {
+          "type": "string"
+        },
+        "output_sha256": {
+          "type": "string"
+        },
+        "policy_sha256": {
+          "type": "string"
+        },
+        "executor_id": {
+          "type": "string"
+        },
+        "executor_identity_sha256": {
+          "type": "string"
+        },
+        "receipt_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "policy_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "capabilities": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deadline_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "parent_task_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "echo",
+            "uppercase",
+            "sha256"
+          ]
+        },
+        "capability_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "attestation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/attestation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "receipt_verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "digest_matches",
+        "signature_present",
+        "algorithm_supported",
+        "domain_matches",
+        "fingerprint_matches",
+        "signature_valid",
+        "valid"
+      ],
+      "properties": {
+        "digest_matches": {
+          "type": "boolean"
+        },
+        "signature_present": {
+          "type": "boolean"
+        },
+        "algorithm_supported": {
+          "type": "boolean"
+        },
+        "domain_matches": {
+          "type": "boolean"
+        },
+        "fingerprint_matches": {
+          "type": "boolean"
+        },
+        "signature_valid": {
+          "type": "boolean"
+        },
+        "valid": {
+          "type": "boolean"
+        }
+      }
+    },
+    "journal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "valid",
+        "event_count",
+        "head_hash",
+        "first_invalid_sequence"
+      ],
+      "properties": {
+        "valid": {
+          "type": "boolean"
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "head_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "first_invalid_sequence": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "receipt",
+        "receipt_verification",
+        "journal"
+      ],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "receipt": {
+          "$ref": "#/$defs/receipt"
+        },
+        "receipt_verification": {
+          "$ref": "#/$defs/receipt_verification"
+        },
+        "journal": {
+          "$ref": "#/$defs/journal"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "assessment": {
+            "properties": {
+              "status": {
+                "const": "accepted"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "invariants": {
+            "items": {
+              "properties": {
+                "passed": {
+                  "const": true
+                }
+              }
+            }
+          },
+          "assessment": {
+            "properties": {
+              "failed_invariants": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "invariants": {
+            "contains": {
+              "properties": {
+                "passed": {
+                  "const": false
+                }
+              },
+              "required": [
+                "passed"
+              ]
+            }
+          },
+          "assessment": {
+            "properties": {
+              "failed_invariants": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "x-lattice-chronicle": {
+    "name": "LatticeChronicle",
+    "version": "1.0",
+    "model": "Constrained transformation graph",
+    "phases": [
+      "invocation",
+      "transformation",
+      "stabilization"
+    ],
+    "entities": {
+      "Agent": {
+        "technical_counterpart": "executor",
+        "runtime_field": "evidence.receipt.executor_id"
+      },
+      "Artifact": {
+        "technical_counterpart": "input or output occurrence with content hash",
+        "runtime_field": "artifacts"
+      },
+      "Fracture": {
+        "technical_counterpart": "state transformation",
+        "runtime_field": "transformation"
+      },
+      "Realm": {
+        "technical_counterpart": "allowlisted compute domain",
+        "runtime_field": "assessment.scope"
+      },
+      "Ritual": {
+        "technical_counterpart": "allowlisted operation with exact recomputation",
+        "runtime_field": "transformation.operation"
+      },
+      "Trigger": {
+        "technical_counterpart": "operation, payload and deadline admission",
+        "runtime_field": "evidence.receipt.policy_sha256"
+      },
+      "Shadow": {
+        "technical_counterpart": "unmeasured perturbation or unknown influence",
+        "runtime_field": "assessment.not_evaluated"
+      }
+    },
+    "rituals": {
+      "echo": {
+        "technical_operation": "echo",
+        "mapping": "Return the exact input string",
+        "activation": "Current compute-only permit; bounded UTF-8 payload and deadline",
+        "failure_boundary": "Output must equal input exactly"
+      },
+      "uppercase": {
+        "technical_operation": "uppercase",
+        "mapping": "ASCII uppercase conversion",
+        "activation": "Current compute-only permit; ASCII input; bounded payload and deadline",
+        "failure_boundary": "Non-ASCII input is rejected; output must match ASCII recomputation"
+      },
+      "sha256": {
+        "technical_operation": "sha256",
+        "mapping": "Lowercase SHA-256 hexadecimal digest of the input UTF-8 bytes",
+        "activation": "Current compute-only permit; bounded UTF-8 payload and deadline",
+        "failure_boundary": "Output must equal the locally recomputed digest"
+      }
+    },
+    "claims": {
+      "accepted": "All nine evidence invariants pass under the current runtime signer and policy",
+      "roots": "Inputs are imported root occurrences; no creation provenance is claimed",
+      "replay": "replay_of is execution provenance and never an output-to-input transformation edge",
+      "certificate": "Derived view; only the embedded receipt has a cryptographic signature",
+      "measurements": "General stability, model fidelity and entropy metrics remain not_evaluated"
+    }
+  }
+}

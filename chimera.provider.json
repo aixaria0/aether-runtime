@@ -17,11 +17,39 @@
         "health_path": "/health",
         "protocol": "aether-runtime/v0.2"
       }
+    },
+    {
+      "capability": "aether.inspect-lineage",
+      "mode": "verification",
+      "network": "loopback",
+      "mutation": "none",
+      "transport": "http",
+      "endpoint": {
+        "method": "GET",
+        "path": "/lattice/{task_id}",
+        "health_path": "/health",
+        "protocol": "lattice-ontology/v1"
+      }
+    },
+    {
+      "capability": "aether.lattice-ontology",
+      "mode": "advisory",
+      "network": "loopback",
+      "mutation": "none",
+      "transport": "http",
+      "endpoint": {
+        "method": "GET",
+        "path": "/lattice/ontology",
+        "health_path": "/health",
+        "protocol": "json-schema/draft-2020-12"
+      }
     }
   ],
   "boundaries": [
     "Execution is restricted to the runtime's allowlisted operations; arbitrary command execution is outside the contract.",
     "Output digests provide integrity signals, not proof of correct execution.",
-    "The current compose topology is for trusted local development unless authentication, TLS, quotas, and network isolation are added."
+    "The current compose topology is for trusted local development unless authentication, TLS, quotas, and network isolation are added.",
+    "Lineage acceptance is scoped to current allowlisted semantics, the current runtime signer, and a consistent local journal snapshot; unknown fidelity, stability, entropy, binary attestation and external anchoring remain unevaluated.",
+    "The lineage certificate is a derived unsigned view containing the existing signed receipt; replay_of records repetition of the original input, not output-to-input ancestry."
   ]
 }

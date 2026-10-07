@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - chimera.provider.json
+      - schemas/lattice-ontology.v1.json
       - .github/workflows/chimera-provider-contract.yml
   pull_request:
     paths:
       - chimera.provider.json
+      - schemas/lattice-ontology.v1.json
       - .github/workflows/chimera-provider-contract.yml
 
 permissions:

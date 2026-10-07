@@ -1,0 +1,20 @@
+{
+  "source_url": "https://chatgpt.com/share/6ac58adb-4e08-83e9-833c-4a0a27c43271?ogimg=plain",
+  "source_title": "Manifest breakdown",
+  "recovered_at_utc": "2026-10-07T00:16:42.763992+00:00",
+  "repository_baseline_commit": "c5e67baf69148a2a40776465323e657a4e2b2593",
+  "visible_user_assistant_messages": 171,
+  "source_page_sha256": "11718f8a8868c2a0a328da1ece3f24c9f08945b70c093d958a8852f51ffbb7a4",
+  "extraction": "Decode the public React Router data stream; resolve indexed message objects; deduplicate by original message ID; retain meaningful visible user/assistant content in timestamp order. Archive non-text metadata without claiming image recovery.",
+  "missing": [
+    "redacted plugin/tool output",
+    "hidden system/developer content",
+    "image pixels"
+  ],
+  "files": {
+    "manifest-breakdown-transcript.md": "963d2a58742267fbe61da431fe4822ea18d70f287ccb75c9d05f2a3a44d40e52",
+    "manifest-breakdown.messages.json": "93a59944c7e8f3110762fd7a49511e13aed7a1803adb081e875f5b6f63cde328",
+    "original-lattice-ontology.v1.json": "1c74db18e12b0636629309c5a280bdc613f94e8a56b81948a7e5ea8efa51ade3",
+    "continuation-handoff.md": "5e83315b9348962ed119cf5c68dcd97b4b95fdee2a2be4b7570476933a013b98"
+  }
+}

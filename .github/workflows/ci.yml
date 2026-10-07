@@ -9,7 +9,17 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.90.0 --profile minimal
-      - run: cargo +1.90.0 test --locked --manifest-path apps/control-plane/Cargo.toml
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Test runtime and export lineage certificates
+        env:
+          AETHER_LATTICE_FIXTURES: ${{ runner.temp }}/lattice-certificates
+        run: cargo +1.90.0 test --locked --manifest-path apps/control-plane/Cargo.toml
+      - name: Validate ontology against real Rust certificates
+        run: |
+          python3 -m pip install jsonschema==4.25.1
+          python3 tests/lattice_schema.py "${{ runner.temp }}/lattice-certificates"
   cpp:
     strategy:
       fail-fast: false
