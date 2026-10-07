@@ -64,6 +64,9 @@ The certificate is a derived **unsigned** view. Only its embedded receipt is
 signed. Graph fields, assessment and journal head are not covered by that receipt
 signature. Consumers must recompute acceptance under their own trusted inputs.
 JSON Schema validates structure, not cryptographic truth or reference equality.
+Healthy latency-based routing can change the chosen executor on replay. The
+replay comparison then reports policy/executor divergence even when recomputed
+output matches and the lineage checks pass. These are distinct assessments.
 
 ## Measurement and trust boundaries
 
@@ -107,4 +110,7 @@ exports, including rejection reports, against the schema. Five structural
 negative controls reject missing evidence, invented metrics, accepted failed
 checks, hidden failures and non-allowlisted operations. Integration tests inspect
 each operation and replay, require read-only journal behavior, and inspect
-failover lineage before and after restart.
+failover lineage before and after restart. The native integration gate also
+alters its own fixture's stored output and journal event, requires rejection
+even with a valid receipt signature, restores the fixture, and requires
+acceptance again without journal mutations from inspection.

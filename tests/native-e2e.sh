@@ -9,6 +9,7 @@ CONTROL_BIN="$ROOT/apps/control-plane/target/release/aether-control-plane"
 ENGINE_LOG="$BUILD_DIR/execution-engine.log"
 CONTROL_LOG="$BUILD_DIR/control-plane.log"
 JOURNAL_PATH="$BUILD_DIR/aether-journal.sqlite3"
+IDENTITY_PATH="$BUILD_DIR/aether-identity.key"
 ENGINE_PID=""
 CONTROL_PID=""
 
@@ -31,7 +32,7 @@ rm -f "$JOURNAL_PATH" "$JOURNAL_PATH-wal" "$JOURNAL_PATH-shm"
 
 "$ENGINE_BIN" >"$ENGINE_LOG" 2>&1 &
 ENGINE_PID=$!
-ENGINE_URL=http://127.0.0.1:50051 MAX_CONCURRENT_TASKS=8 AETHER_JOURNAL_PATH="$JOURNAL_PATH" \
+ENGINE_URL=http://127.0.0.1:50051 MAX_CONCURRENT_TASKS=8 AETHER_JOURNAL_PATH="$JOURNAL_PATH" AETHER_IDENTITY_PATH="$IDENTITY_PATH" \
   "$CONTROL_BIN" >"$CONTROL_LOG" 2>&1 &
 CONTROL_PID=$!
 
@@ -57,4 +58,5 @@ if [[ "$ready" -ne 1 ]]; then
 fi
 
 AETHER_API=http://127.0.0.1:8080 python3 "$ROOT/tests/e2e.py"
+AETHER_API=http://127.0.0.1:8080 AETHER_TEST_JOURNAL_PATH="$JOURNAL_PATH" python3 "$ROOT/tests/lattice_tamper_e2e.py"
 echo "Aether native core smoke: PASS"

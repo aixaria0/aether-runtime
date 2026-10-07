@@ -67,7 +67,7 @@ def main():
         assert receipt["receipt_sha256"]
         assert receipt["verified"] is True
         assert receipt["capability_names"] == ["compute"]
-        assert receipt["executor_id"] == "cpp-grpc-v1"
+        assert receipt["executor_id"] in {"cpp-grpc-v1", "rust-builtin-v1"}
         attestation = receipt["attestation"]
         assert attestation["algorithm"] == "ed25519"
         assert attestation["domain"] == "aether.execution-receipt.v1"
@@ -96,6 +96,9 @@ def main():
         _, journal_after = request_json("/journal/verify")
         assert journal_before == journal_after, "lineage inspection must not append events"
         if first_task is None:
+            # Prove the native route works at cold start. Subsequent successful
+            # calls may legitimately route to Rust after measuring latency.
+            assert receipt["executor_id"] == "cpp-grpc-v1", receipt
             first_task = body["task_id"]
             first_receipt = receipt
 
@@ -126,11 +129,15 @@ def main():
 
     code, replay = request_json(f"/replay/{first_task}", "POST", {})
     assert code == 200
-    assert replay["matched"] is True, replay
-    assert replay["first_divergence"] is None
-    assert replay["input_match"] and replay["policy_match"]
-    assert replay["executor_match"] and replay["output_match"]
+    policy_match = first_receipt["policy_sha256"] == replay["receipt"]["policy_sha256"]
+    executor_match = first_receipt["executor_identity_sha256"] == replay["receipt"]["executor_identity_sha256"]
+    assert replay["input_match"] and replay["output_match"]
+    assert replay["policy_match"] == policy_match
+    assert replay["executor_match"] == executor_match
     assert replay["verification_match"]
+    expected_divergence = "policy" if not policy_match else "executor_identity" if not executor_match else None
+    assert replay["first_divergence"] == expected_divergence, replay
+    assert replay["matched"] == (expected_divergence is None), replay
     assert replay["replay_task_id"] != first_task
     assert replay["receipt"]["parent_task_id"] == first_task
     code, replay_lineage = request_json(f"/lattice/{replay['replay_task_id']}")
