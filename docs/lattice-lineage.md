@@ -95,6 +95,12 @@ retain its trusted-network boundary.
 
 ## CHIMERA boundary
 
+The bounded [journal export](journal-export.md) at
+`GET /lattice/{task_id}/journal` adds a complete genesis-to-head evidence envelope
+from one SQLite snapshot, capped at 256 events and 1 MiB. Nanosecond timestamps
+remain exact decimal strings. This export enables a consumer to verify chain and
+receipt-event bindings under its own checkpoint without trusting producer flags.
+
 The provider manifest declares read-only `aether.inspect-lineage` and advisory
 `aether.lattice-ontology` HTTP capabilities. The existing execute contract is
 retained.
@@ -129,9 +135,10 @@ confirmed consumer acceptance.
 See the immutable
 [adapter contract and acquisition steps](https://github.com/aixaria0/CHIMERA-OMEGA/blob/8cbd6ddc169d0c641c109e562c3947538c39b057/docs/AETHER_LATTICE_ADAPTER_V1.md)
 for exact context fields, receipt serialization, signature domain, CLI usage,
-recorded fixtures and limitations. The next bounded slice exports journal events
-from the same snapshot so a caller-pinned consumer can recompute chain continuity
-and receipt-event binding.
+recorded fixtures and limitations. That first-stage consumer contract remains
+unchanged: its journal dimension is UNKNOWN. A separate bounded journal consumer
+can evaluate the new exported events and report its own independently computed
+chain and receipt-event predicate without changing the earlier report's meaning.
 
 ## Verification
 

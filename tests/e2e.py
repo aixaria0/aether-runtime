@@ -28,6 +28,35 @@ def execute(operation, payload, deadline_ms=10_000):
     )
 
 
+def inspect_journal_export(task, receipt, parent=None):
+    _, before = request_json('/journal/verify')
+    code, export = request_json(f'/lattice/{task}/journal')
+    _, after = request_json('/journal/verify')
+    assert code == 200 and before == after
+    assert export['schema'] == 'aether-journal-export/v1'
+    assert export['journal']['coverage'] == 'genesis_to_snapshot_head'
+    assert export['lineage']['certificate']['evidence']['journal'] == before
+    assert export['lineage']['execution']['receipt'] == receipt
+    assert set(export['lineage']['execution']) == {'task_id','parent_task_id','operation','payload','output','receipt'}
+    if parent:
+        assert export['lineage']['parent']['task_id'] == parent
+    else:
+        assert export['lineage']['parent'] is None
+    previous = None
+    events = export['journal']['events']
+    assert len(events) == before['event_count'] <= 256
+    for index, event in enumerate(events):
+        assert event['sequence'] == index + 1
+        assert event['previous_hash'] == previous
+        timestamp = event['timestamp_ns_decimal']
+        assert isinstance(timestamp,str) and str(int(timestamp)) == timestamp
+        parts = (previous or '', event['event_id'], event['task_id'], event['event_type'], timestamp, event['payload_json'])
+        message = b''.join(len(part.encode()).to_bytes(8,'big') + part.encode() for part in parts)
+        assert event['event_hash'] == hashlib.sha256(message).hexdigest()
+        previous = event['event_hash']
+    assert previous == before['head_hash']
+
+
 def main():
     with urllib.request.urlopen(BASE + "/health", timeout=20) as response:
         assert response.status == 200
@@ -92,6 +121,7 @@ def main():
         assert lineage["artifacts"][0]["id"] != lineage["artifacts"][1]["id"]
         assert lineage["artifacts"][1]["parent"] == lineage["artifacts"][0]["id"]
         assert lineage["transformation"]["replay_of"] is None
+        inspect_journal_export(body['task_id'], receipt)
         assert ontology["x-lattice-chronicle"]["rituals"][operation]["technical_operation"] == operation
         _, journal_after = request_json("/journal/verify")
         assert journal_before == journal_after, "lineage inspection must not append events"
@@ -146,10 +176,16 @@ def main():
     assert replay_lineage["transformation"]["replay_of"] == f"aether:transformation:{first_task}"
     assert replay_lineage["artifacts"][0]["parent"] is None
     assert replay_lineage["artifacts"][0]["sha256"] == first_receipt["input_sha256"]
+    inspect_journal_export(replay['replay_task_id'], replay['receipt'], first_task)
 
     try:
         request_json("/lattice/00000000-0000-0000-0000-000000000000")
         raise AssertionError("missing lineage must return 404")
+    except urllib.error.HTTPError as error:
+        assert error.code == 404
+    try:
+        request_json('/lattice/00000000-0000-0000-0000-000000000000/journal')
+        raise AssertionError('missing journal export must return 404')
     except urllib.error.HTTPError as error:
         assert error.code == 404
 

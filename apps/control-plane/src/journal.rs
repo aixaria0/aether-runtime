@@ -58,6 +58,26 @@ pub struct ExecutionSnapshot {
     pub chain: JournalVerification,
 }
 
+pub const EXPORT_MAX_EVENTS: usize = 256;
+pub const EXPORT_MAX_STRING_BYTES: usize = 4096;
+
+#[derive(Debug)]
+pub enum ExportError {
+    Limit,
+    Storage(String),
+}
+
+impl From<String> for ExportError {
+    fn from(error: String) -> Self {
+        Self::Storage(error)
+    }
+}
+
+pub struct BoundedSnapshot {
+    pub snapshot: ExecutionSnapshot,
+    pub journal_events: Vec<JournalEvent>,
+}
+
 impl Journal {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, String> {
         let journal = Self { path: path.into() };
@@ -365,8 +385,12 @@ impl Journal {
         let events = rows
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
+        Ok(Self::verify_events(&events))
+    }
+
+    fn verify_events(events: &[JournalEvent]) -> JournalVerification {
         let mut previous: Option<String> = None;
-        for event in &events {
+        for event in events {
             let expected = hash_event(
                 previous.as_deref(),
                 &event.event_id,
@@ -376,22 +400,127 @@ impl Journal {
                 &event.payload_json,
             );
             if event.previous_hash != previous || event.event_hash != expected {
-                return Ok(JournalVerification {
+                return JournalVerification {
                     valid: false,
                     event_count: events.len() as u64,
                     head_hash: previous,
                     first_invalid_sequence: Some(event.sequence),
-                });
+                };
             }
             previous = Some(event.event_hash.clone());
         }
 
-        Ok(JournalVerification {
+        JournalVerification {
             valid: true,
             event_count: events.len() as u64,
             head_hash: previous,
             first_invalid_sequence: None,
-        })
+        }
+    }
+
+    /// Full genesis-to-head evidence, with limits checked before materializing
+    /// database strings. No pagination or partial history can imply coverage.
+    pub fn bounded_snapshot(&self, task_id: &str) -> Result<Option<BoundedSnapshot>, ExportError> {
+        let mut conn = self.connect()?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| ExportError::Storage(e.to_string()))?;
+        let Some(execution) = Self::read_bounded_execution(&tx, task_id)? else {
+            return Ok(None);
+        };
+        let parent = execution
+            .receipt
+            .parent_task_id
+            .as_deref()
+            .map(|id| Self::read_bounded_execution(&tx, id))
+            .transpose()?
+            .flatten();
+        let mut stmt = tx.prepare(
+            "SELECT sequence,event_id,task_id,event_type,timestamp_ns,payload_json,previous_hash,event_hash,
+             length(CAST(event_id AS BLOB)),length(CAST(task_id AS BLOB)),length(CAST(event_type AS BLOB)),
+             length(CAST(payload_json AS BLOB)),coalesce(length(CAST(previous_hash AS BLOB)),0),length(CAST(event_hash AS BLOB))
+             FROM execution_events ORDER BY sequence ASC LIMIT 257"
+        ).map_err(|e| ExportError::Storage(e.to_string()))?;
+        let mut rows = stmt
+            .query([])
+            .map_err(|e| ExportError::Storage(e.to_string()))?;
+        let mut journal_events = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| ExportError::Storage(e.to_string()))?
+        {
+            if journal_events.len() == EXPORT_MAX_EVENTS {
+                return Err(ExportError::Limit);
+            }
+            for column in 8..14 {
+                let bytes: i64 = row
+                    .get(column)
+                    .map_err(|e| ExportError::Storage(e.to_string()))?;
+                if bytes < 0 || bytes as usize > EXPORT_MAX_STRING_BYTES {
+                    return Err(ExportError::Limit);
+                }
+            }
+            let event = (|| -> rusqlite::Result<JournalEvent> {
+                Ok(JournalEvent {
+                    sequence: row.get(0)?,
+                    event_id: row.get(1)?,
+                    task_id: row.get(2)?,
+                    event_type: row.get(3)?,
+                    timestamp_ns: row.get::<_, i64>(4)? as u64,
+                    payload_json: row.get(5)?,
+                    previous_hash: row.get(6)?,
+                    event_hash: row.get(7)?,
+                })
+            })()
+            .map_err(|e| ExportError::Storage(e.to_string()))?;
+            journal_events.push(event);
+        }
+        drop(rows);
+        drop(stmt);
+        let chain = Self::verify_events(&journal_events);
+        let events = journal_events
+            .iter()
+            .filter(|e| e.task_id == task_id)
+            .cloned()
+            .collect();
+        tx.commit()
+            .map_err(|e| ExportError::Storage(e.to_string()))?;
+        Ok(Some(BoundedSnapshot {
+            snapshot: ExecutionSnapshot {
+                execution,
+                parent,
+                events,
+                chain,
+            },
+            journal_events,
+        }))
+    }
+
+    fn read_bounded_execution(
+        conn: &Connection,
+        id: &str,
+    ) -> Result<Option<StoredExecution>, ExportError> {
+        let lengths: Option<Vec<i64>> = conn.query_row(
+            "SELECT length(CAST(task_id AS BLOB)),coalesce(length(CAST(parent_task_id AS BLOB)),0),
+             length(CAST(operation AS BLOB)),length(CAST(payload AS BLOB)),length(CAST(output AS BLOB)),
+             length(CAST(receipt_json AS BLOB)) FROM executions WHERE task_id=?1", [id],
+            |row| (0..6).map(|i| row.get(i)).collect()
+        ).optional().map_err(|e| ExportError::Storage(e.to_string()))?;
+        let Some(lengths) = lengths else {
+            return Ok(None);
+        };
+        if lengths.iter().enumerate().any(|(i, n)| {
+            *n < 0
+                || *n as usize
+                    > if i == 5 {
+                        16384
+                    } else {
+                        EXPORT_MAX_STRING_BYTES
+                    }
+        }) {
+            return Err(ExportError::Limit);
+        }
+        Self::read_execution(conn, id).map_err(ExportError::Storage)
     }
 }
 
@@ -524,5 +653,116 @@ mod tests {
         .unwrap();
         assert!(!journal.verify_chain().unwrap().valid);
         let _ = fs::remove_file(path);
+    }
+
+    fn export_fixture() -> (PathBuf, Journal, StoredExecution) {
+        let location = path();
+        let journal = Journal::open(&location).unwrap();
+        let receipt = sample_receipt();
+        let record = StoredExecution {
+            task_id: receipt.task_id.clone(),
+            parent_task_id: None,
+            operation: "echo".into(),
+            payload: "abc".into(),
+            output: "abc".into(),
+            receipt,
+            created_at_ns: now_ns(),
+        };
+        journal.save_execution(&record).unwrap();
+        (location, journal, record)
+    }
+
+    #[test]
+    fn bounded_export_is_complete_read_only_and_preserves_timestamp_bytes() {
+        let (location, journal, record) = export_fixture();
+        let event = journal
+            .append_event(&record.task_id, "TASK_ACCEPTED", BTreeMap::new())
+            .unwrap();
+        let before = journal.verify_chain().unwrap();
+        let export = journal.bounded_snapshot(&record.task_id).unwrap().unwrap();
+        assert_eq!(export.snapshot.chain.head_hash, before.head_hash);
+        assert_eq!(export.journal_events.len(), 1);
+        let bytes = crate::journal_export::encode(export, &"0".repeat(64)).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            value["journal"]["events"][0]["timestamp_ns_decimal"],
+            event.timestamp_ns.to_string()
+        );
+        assert!(value["lineage"]["execution"].get("created_at_ns").is_none());
+        assert_eq!(
+            value["lineage"]["certificate"]["evidence"]["journal"]["head_hash"],
+            event.event_hash
+        );
+        assert_eq!(
+            journal.verify_chain().unwrap().event_count,
+            before.event_count
+        );
+        assert!(journal.bounded_snapshot("unknown").unwrap().is_none());
+        let _ = fs::remove_file(location);
+    }
+
+    #[test]
+    fn bounded_export_rejects_history_and_database_string_overflow() {
+        let (location, journal, record) = export_fixture();
+        for _ in 0..EXPORT_MAX_EVENTS {
+            journal
+                .append_event(&record.task_id, "TASK_ACCEPTED", BTreeMap::new())
+                .unwrap();
+        }
+        assert_eq!(
+            journal
+                .bounded_snapshot(&record.task_id)
+                .unwrap()
+                .unwrap()
+                .journal_events
+                .len(),
+            EXPORT_MAX_EVENTS
+        );
+        journal
+            .append_event(&record.task_id, "TASK_ACCEPTED", BTreeMap::new())
+            .unwrap();
+        assert!(matches!(
+            journal.bounded_snapshot(&record.task_id),
+            Err(ExportError::Limit)
+        ));
+        let conn = Connection::open(&location).unwrap();
+        conn.execute("DELETE FROM execution_events", []).unwrap();
+        journal
+            .append_event(
+                &record.task_id,
+                "TASK_ACCEPTED",
+                BTreeMap::from([("oversize".into(), "x".repeat(4097))]),
+            )
+            .unwrap();
+        assert!(matches!(
+            journal.bounded_snapshot(&record.task_id),
+            Err(ExportError::Limit)
+        ));
+        conn.execute("DELETE FROM execution_events", []).unwrap();
+        conn.execute("UPDATE executions SET payload=?1", ["x".repeat(4097)])
+            .unwrap();
+        assert!(matches!(
+            journal.bounded_snapshot(&record.task_id),
+            Err(ExportError::Limit)
+        ));
+        let _ = fs::remove_file(location);
+    }
+
+    #[test]
+    fn bounded_export_does_not_hide_corrupt_history() {
+        let (location, journal, record) = export_fixture();
+        journal
+            .append_event(&record.task_id, "TASK_ACCEPTED", BTreeMap::new())
+            .unwrap();
+        let conn = Connection::open(&location).unwrap();
+        conn.execute(
+            "UPDATE execution_events SET payload_json='{} ',event_type='TAMPERED'",
+            [],
+        )
+        .unwrap();
+        let snapshot = journal.bounded_snapshot(&record.task_id).unwrap().unwrap();
+        assert!(!snapshot.snapshot.chain.valid);
+        assert_eq!(snapshot.journal_events[0].event_type, "TAMPERED");
+        let _ = fs::remove_file(location);
     }
 }

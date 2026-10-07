@@ -43,6 +43,19 @@
         "health_path": "/health",
         "protocol": "json-schema/draft-2020-12"
       }
+    },
+    {
+      "capability": "aether.export-journal-lineage",
+      "mode": "verification",
+      "network": "loopback",
+      "mutation": "none",
+      "transport": "http",
+      "endpoint": {
+        "method": "GET",
+        "path": "/lattice/{task_id}/journal",
+        "health_path": "/health",
+        "protocol": "aether-journal-export/v1"
+      }
     }
   ],
   "boundaries": [
@@ -50,6 +63,7 @@
     "Output digests provide integrity signals, not proof of correct execution.",
     "The current compose topology is for trusted local development unless authentication, TLS, quotas, and network isolation are added.",
     "Lineage acceptance is scoped to current allowlisted semantics, the current runtime signer, and a consistent local journal snapshot; unknown fidelity, stability, entropy, binary attestation and external anchoring remain unevaluated.",
-    "The lineage certificate is a derived unsigned view containing the existing signed receipt; replay_of records repetition of the original input, not output-to-input ancestry."
+    "The lineage certificate is a derived unsigned view containing the existing signed receipt; replay_of records repetition of the original input, not output-to-input ancestry.",
+    "Journal export covers genesis through one snapshot head, with 256-event, 4096-byte event/raw-record string and 1 MiB response limits; oversized histories fail closed. Checkpoints are caller-selected and remain externally unanchored."
   ]
 }
