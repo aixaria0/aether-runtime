@@ -97,8 +97,41 @@ retain its trusted-network boundary.
 
 The provider manifest declares read-only `aether.inspect-lineage` and advisory
 `aether.lattice-ontology` HTTP capabilities. The existing execute contract is
-retained. This declaration does not claim that OMEGA already consumes the
-certificate; a verifier-selected OMEGA adapter is a subsequent slice.
+retained.
+
+CHIMERA-OMEGA now consumes this contract through the offline
+`omega verify-aether-lineage <evidence.json> --context <context.json>
+--expect-context <external-context-digest>` command. The adapter was merged in
+[OMEGA PR #11](https://github.com/aixaria0/CHIMERA-OMEGA/pull/11) at
+`91c5e28a0713c50c0b9921a9dfd2c0c98026b412`, preserving its existing core verifier
+and the separate Aether Runtime OS importer. Its supported Aether semantics are
+pinned to `04d785f7beee5ff96d78e092a1d73b79987c9e0e`; that revision selects source
+semantics and does not attest the running producer binary.
+
+The caller supplies an external digest pin for a context selecting the source
+revision, trusted signer fingerprint, certificate digest and journal head/count.
+OMEGA independently recomputes the ordered receipt digest, domain-separated
+Ed25519 signature, raw input/output hashes, allowlisted operation result, current
+compute policy, artifact/transformation references and authenticated direct
+replay parent. Producer flags cannot select trust or rescue invalid bindings.
+The consumer retains OMEGA's stricter JSON limits, including 4096-byte strings;
+it does not admit every payload allowed by Aether's 64 KiB input limit.
+
+Its confirmed predicate is only
+`SIGNED_AETHER_OPERATION_AND_PINNED_LINEAGE_BINDING_ONLY`. Journal checkpoint
+binding confirms the caller-selected head/count reference, not the event chain
+or the receipt's inclusion in that chain. Full journal integrity, independent
+observation and producer binary attestation remain `UNKNOWN`; the core OMEGA
+verdict and target execution remain `NOT_RUN`. Aether's nine-invariant assessment
+is retained as attributed producer metadata rather than promoted to independently
+confirmed consumer acceptance.
+
+See the immutable
+[adapter contract and acquisition steps](https://github.com/aixaria0/CHIMERA-OMEGA/blob/8cbd6ddc169d0c641c109e562c3947538c39b057/docs/AETHER_LATTICE_ADAPTER_V1.md)
+for exact context fields, receipt serialization, signature domain, CLI usage,
+recorded fixtures and limitations. The next bounded slice exports journal events
+from the same snapshot so a caller-pinned consumer can recompute chain continuity
+and receipt-event binding.
 
 ## Verification
 
