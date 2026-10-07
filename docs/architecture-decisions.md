@@ -79,10 +79,10 @@ commit; private signing material is excluded.
 
 ## Next vertical slices
 
-1. Export bounded raw journal evidence from the same SQLite snapshot as the
-   certificate. Extend the consumer to recompute existing chain hashes and
-   ordered receipt-event bindings under a caller-selected checkpoint, with
-   explicit coverage limits and fail-closed handling of missing events.
+1. Complete the consumer side of the [bounded journal export](journal-export.md):
+   independently recompute existing chain hashes and ordered receipt-event
+   bindings under a caller-selected checkpoint. Keep the first-stage consumer
+   unchanged and require explicit, fail-closed genesis-to-head coverage.
 2. A signer/policy registry supports explicit historical key and semantic revisions.
 3. External journal anchoring binds selected heads outside the replaceable database.
 4. Multi-input transformations and validated DAG composition distinguish content

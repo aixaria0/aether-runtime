@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::Html,
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -21,6 +21,7 @@ use tonic::{
 mod evidence;
 mod identity;
 mod journal;
+mod journal_export;
 mod kernel;
 mod lattice;
 mod scheduler;
@@ -617,6 +618,43 @@ async fn lineage(
     .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "task evidence not found"))
 }
 
+async fn lineage_journal(
+    State(state): State<Arc<AppState>>,
+    Path(task_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let journal = state.journal.clone();
+    let signer = state.identity.info().fingerprint_sha256;
+    let bytes = tokio::task::spawn_blocking(move || {
+        journal
+            .bounded_snapshot(&task_id)?
+            .map(|snapshot| journal_export::encode(snapshot, &signer))
+            .transpose()
+    })
+    .await
+    .map_err(|e| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("journal export task: {e}"),
+        )
+    })?
+    .map_err(|e| match e {
+        journal::ExportError::Limit => api_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "journal export exceeds bounded evidence limits",
+        ),
+        journal::ExportError::Storage(message) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("journal export: {message}"),
+        ),
+    })?
+    .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "task evidence not found"))?;
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        bytes,
+    )
+        .into_response())
+}
+
 async fn replay(
     State(state): State<Arc<AppState>>,
     Path(task_id): Path<String>,
@@ -746,6 +784,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/evidence/{task_id}", get(evidence))
         .route("/lattice/ontology", get(lattice_ontology))
         .route("/lattice/{task_id}", get(lineage))
+        .route("/lattice/{task_id}/journal", get(lineage_journal))
         .route("/replay/{task_id}", post(replay))
         .with_state(state)
         .layer(tower_http::trace::TraceLayer::new_for_http());
